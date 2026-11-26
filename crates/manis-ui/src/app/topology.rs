@@ -88,6 +88,7 @@ pub(in crate::app) struct TopologyState {
     pub(in crate::app) member_edit_nonce: u64,
     pub(in crate::app) hovered_rules: Option<RulesTreeFocus>,
     pub(in crate::app) pinned_rules: Option<RulesTreeFocus>,
+    pub(in crate::app) rules_manual_group_expanded: bool,
     pub(in crate::app) nodes_policy_col_scrolls: RefCell<Vec<gpui::ScrollHandle>>,
     pub(in crate::app) nodes_leaf_col_scroll: gpui::ScrollHandle,
     pub(in crate::app) nodes_horizontal_scroll: gpui::ScrollHandle,
@@ -135,7 +136,7 @@ impl TopologyState {
     }
 
     pub(in crate::app) fn active_rules_focus(&self) -> Option<&RulesTreeFocus> {
-        self.hovered_rules.as_ref().or(self.pinned_rules.as_ref())
+        self.pinned_rules.as_ref().or(self.hovered_rules.as_ref())
     }
 
     pub(in crate::app) fn view_for(
@@ -1051,7 +1052,8 @@ mod tests {
             "scrolling the nodes column must not move the policy column"
         );
 
-        // Switch to RoutingRules: 15 manual rules cluster into 3 target groups + FINAL = 4 cards.
+        // Switch to RoutingRules: 15 manual rules collapse by default into 1 Manual Rules group
+        // + FINAL = 2 top-level cards.
         cx.update(|window, cx| {
             app.update(cx, |app, cx| {
                 app.primary_workspace = PrimaryWorkspace::RoutingRules;
@@ -1060,17 +1062,22 @@ mod tests {
             window.draw(cx).clear(cx);
         });
         assert!(cx.debug_bounds("tree-rule-0").is_some());
-        let final_rule = cx.debug_bounds("tree-rule-3").expect("FINAL rule visible");
+        assert!(cx.debug_bounds("tree-rule-manual-toggle").is_some());
+        assert!(
+            cx.debug_bounds("tree-manual-rule-0").is_none(),
+            "Manual Rules group starts collapsed by default"
+        );
+        let final_rule = cx.debug_bounds("tree-rule-1").expect("FINAL rule visible");
         let rules_canvas = cx
             .debug_bounds("rules-tree-canvas")
             .expect("rules tree canvas");
         assert!(
             final_rule.bottom() <= rules_canvas.bottom(),
-            "4 clustered rule cards fit comfortably inside rules-tree-canvas"
+            "collapsed manual group + FINAL fit comfortably inside rules-tree-canvas"
         );
         assert!(
-            cx.debug_bounds("tree-rule-4").is_none(),
-            "15 manual rules across 3 targets cluster into 3 cards plus FINAL"
+            cx.debug_bounds("tree-rule-2").is_none(),
+            "15 manual rules collapse into 1 group card plus FINAL"
         );
 
         // Add 12 local rule groups so Column 1 exceeds viewport height and verify scrolling
@@ -1107,8 +1114,8 @@ mod tests {
             .debug_bounds("tree-rule-exit-0")
             .expect("rule exit 0 before scroll");
         assert!(
-            cx.debug_bounds("tree-rule-15").is_some(),
-            "FINAL card after 12 local groups + 3 manual clusters is laid out"
+            cx.debug_bounds("tree-rule-13").is_some(),
+            "FINAL card after 1 collapsed manual group + 12 local groups is laid out"
         );
         let rules_col0_max =
             app.read_with(cx, |app, _| app.topology.rules_col_scrolls[0].max_offset());
@@ -1711,5 +1718,153 @@ mod tests {
                 && rule15_after.bottom() <= rules_viewport.bottom(),
             "pinning a policy in rules tree auto-scrolls its off-screen rules into view"
         );
+    }
+
+    #[gpui::test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "Verifies collapsible Manual Rules group, pin-to-retarget in Column 2, and up/down group reordering in rules tree"
+    )]
+    fn rules_tree_supports_collapsible_manual_group_pin_retarget_and_reordering(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.update(crate::init);
+        let root = std::env::temp_dir().join(format!(
+            "manis-rules-tree-ops-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        let store = root.join("subscriptions");
+        std::fs::create_dir_all(&store).expect("create fixture store");
+        crate::manual_rule::save_manual_rules_in(
+            &store,
+            &[
+                ManualRule::parse(ManualRuleKind::HostSuffix, "alpha.example", "AI 自动选择")
+                    .expect("manual rule 1"),
+                ManualRule::parse(ManualRuleKind::HostSuffix, "beta.example", "DIRECT")
+                    .expect("manual rule 2"),
+            ],
+        )
+        .expect("seed manual rules");
+
+        let mut app = None;
+        let (_, window) = cx.add_window_view(|window, cx| {
+            let entity = cx.new(|_| {
+                let mut fixture = ManisApp::with_fixture_controller_and_subscription_store(
+                    "http://127.0.0.1:1",
+                    store.clone(),
+                );
+                fixture.primary_workspace = PrimaryWorkspace::RoutingRules;
+                let mut g1 = ManagedPolicyGroup::new("ai", "AI 自动选择").expect("policy");
+                g1.strategy = ManagedPolicyStrategy::Manual;
+                let mut g2 = ManagedPolicyGroup::new("media", "流媒体与视频").expect("policy");
+                g2.strategy = ManagedPolicyStrategy::LowestLatency;
+                fixture.managed_policies.groups = vec![g1, g2];
+                fixture.local_rule_groups = vec![LocalRoutingRuleGroup {
+                    id: "local-ai".to_owned(),
+                    name: "AI 规则组".to_owned(),
+                    target_policy: manis_profile::Name::parse("AI 自动选择").expect("target"),
+                    enabled: true,
+                    rules: vec![
+                        ManualRule::parse(ManualRuleKind::HostSuffix, "openai.com", "AI 自动选择")
+                            .expect("local rule"),
+                    ],
+                }];
+                fixture
+            });
+            app = Some(entity.clone());
+            crate::root(entity, window, cx)
+        });
+        let app = app.expect("fixture app");
+        window.update(|window, cx| window.draw(cx).clear(cx));
+        window.update(|window, cx| window.draw(cx).clear(cx));
+
+        // 1. Manual Rules group starts collapsed by default.
+        assert!(
+            window.debug_bounds("tree-rule-manual-toggle").is_some(),
+            "Manual Rules collapsible group renders"
+        );
+        assert!(
+            window.debug_bounds("tree-manual-rule-0").is_none(),
+            "Manual sub-rules stay hidden while Manual Rules is collapsed"
+        );
+
+        // 2. Pin local rule group (index 1, after Manual Rules) and click policy 1 ("流媒体与视频")
+        // in Column 2 to switch its target policy.
+        let local_group_card = window
+            .debug_bounds("tree-rule-1")
+            .expect("local rule group card in Column 1");
+        window.simulate_click(local_group_card.center(), Modifiers::none());
+        window.update(|window, cx| window.draw(cx).clear(cx));
+        assert_eq!(
+            app.read_with(window, |app, _| app.topology.pinned_rules.clone()),
+            Some(super::RulesTreeFocus::Rule("local:local-ai".to_owned()))
+        );
+        let media_policy = window
+            .debug_bounds("tree-rule-policy-1")
+            .expect("second policy card in Column 2");
+        window.simulate_click(media_policy.center(), Modifiers::none());
+        window.run_until_parked();
+        assert!(
+            app.read_with(window, |app, _| !app.status.is_empty()),
+            "clicking a policy in Column 2 while a rule is pinned persists retargeting"
+        );
+
+        // 3. Reorder: move Manual Rules group down below the local group using ↓ button.
+        let move_down = window
+            .debug_bounds("tree-rule-move-down-manual")
+            .expect("Manual Rules group down-arrow renders");
+        window.simulate_click(move_down.center(), Modifiers::none());
+        window.run_until_parked();
+        assert!(
+            app.read_with(window, |app, _| !app.status.is_empty()),
+            "clicking down arrow triggers rule group order persistence"
+        );
+
+        // 4. Expand Manual Rules group -> indented manual sub-rules appear, and pinning
+        // sub-rule #0 then clicking a policy in Column 2 retargets that individual manual rule.
+        let toggle = window
+            .debug_bounds("tree-rule-manual-toggle")
+            .expect("manual toggle button");
+        window.simulate_click(toggle.center(), Modifiers::none());
+        window.update(|window, cx| window.draw(cx).clear(cx));
+        let manual_child0 = window
+            .debug_bounds("tree-manual-rule-0")
+            .expect("first manual sub-rule renders after expanding Manual Rules");
+        assert!(
+            window.debug_bounds("tree-manual-rule-1").is_some(),
+            "second manual sub-rule renders after expanding Manual Rules"
+        );
+        window.simulate_click(manual_child0.center(), Modifiers::none());
+        window.update(|window, cx| window.draw(cx).clear(cx));
+        assert_eq!(
+            app.read_with(window, |app, _| app.topology.pinned_rules.clone()),
+            Some(super::RulesTreeFocus::Rule("manual:0".to_owned()))
+        );
+        let media_policy = window
+            .debug_bounds("tree-rule-policy-1")
+            .expect("policy card in Column 2 while manual rule pinned");
+        window.simulate_click(media_policy.center(), Modifiers::none());
+        window.run_until_parked();
+        assert!(
+            app.read_with(window, |app, _| !app.status.is_empty()),
+            "clicking Column 2 policy retargets pinned individual manual rule"
+        );
+
+        // Collapse Manual Rules again -> sub-rules hide cleanly.
+        let toggle = window
+            .debug_bounds("tree-rule-manual-toggle")
+            .expect("manual toggle button to collapse");
+        window.simulate_click(toggle.center(), Modifiers::none());
+        window.update(|window, cx| window.draw(cx).clear(cx));
+        assert!(
+            window.debug_bounds("tree-manual-rule-0").is_none(),
+            "collapsing Manual Rules hides manual sub-rules again"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
     }
 }

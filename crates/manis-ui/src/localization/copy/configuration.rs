@@ -31,8 +31,6 @@ pub(crate) const ADD_RULE_SOURCE: LocalizedText =
     LocalizedText::new("Add rule source", "添加规则来源");
 pub(crate) const ADD_SOURCE: LocalizedText = LocalizedText::new("Add source", "添加来源");
 pub(crate) const ALREADY_ADDED: LocalizedText = LocalizedText::new("Already added", "已添加");
-pub(crate) const ALREADY_CONFIGURED: LocalizedText =
-    LocalizedText::new("Already configured", "已经配置");
 pub(crate) const AND: LocalizedText = LocalizedText::new("AND", "并且");
 pub(crate) const AN_EXISTING_SUBSCRIPTION_MUST_KEEP_AN_HTTP_HTTPS_URL: LocalizedText =
     LocalizedText::new(

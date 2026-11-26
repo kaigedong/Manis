@@ -16,7 +16,11 @@ pub(crate) use model::{
     ManualRuleError, ManualRuleKind, ManualRuleStoreError, replace_manual_rule,
 };
 
-pub(crate) use compiler::{append_local_routing_group_rules, append_manual_rules};
+#[cfg(test)]
+pub(crate) use compiler::append_manual_rules;
+pub(crate) use compiler::{
+    append_local_routing_group_rules, append_manual_non_final_rules, apply_manual_final_rule,
+};
 #[cfg(all(not(windows), test))]
 pub(super) use store::decode_manual_rules;
 pub(crate) use store::{load_manual_rules_in, save_manual_rules_in};

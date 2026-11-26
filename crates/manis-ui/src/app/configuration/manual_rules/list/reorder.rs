@@ -102,7 +102,7 @@ impl ManisApp {
     pub(super) fn normalized_rule_group_order(&self) -> Vec<String> {
         mihomo::normalized_routing_rule_group_order(
             &self.rule_sources.group_order,
-            !self.manual_rules.is_empty(),
+            self.has_regular_manual_rules(),
             &self.rule_sources.sources,
             &self.local_rule_groups,
         )

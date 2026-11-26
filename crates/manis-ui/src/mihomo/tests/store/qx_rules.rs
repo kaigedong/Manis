@@ -349,6 +349,48 @@ fn saved_rule_group_order_controls_compiled_rule_priority() -> Result<(), Box<dy
 
 #[cfg(not(windows))]
 #[test]
+fn standalone_final_fallback_compiles_without_regular_manual_rules()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = test_temp_dir("manis-standalone-final-fallback");
+    let store = root.join("subscriptions");
+    super::save_subscription_source_in(
+        &store,
+        "https://provider.example.invalid/sub?token=fixture-secret",
+    )?;
+    let source = super::save_qx_rule_source_in(
+        &store,
+        "https://rules.example.invalid/media.list",
+        "DIRECT",
+        "DOMAIN-SUFFIX,youtube.com,PROXY\n",
+    )?
+    .into_source();
+    assert_eq!(source.rule_count, 1);
+
+    let final_rule = crate::manual_rule::ManualRule::final_rule("DIRECT")?;
+    crate::manual_rule::save_manual_rules_in(&store, &[final_rule])?;
+    let profile = super::compile_saved_profile(&store, None)?;
+    let yaml = manis_profile::render_mihomo_yaml(&profile)?;
+    assert!(yaml.contains("DOMAIN-SUFFIX,youtube.com,DIRECT"), "{yaml}");
+    assert!(yaml.trim_end().ends_with("\"MATCH,DIRECT\""), "{yaml}");
+    assert!(!yaml.contains("MATCH,__MANIS_GLOBAL__"), "{yaml}");
+
+    // Clearing the explicit FINAL rule restores the default Global exit fallback.
+    crate::manual_rule::save_manual_rules_in(&store, &[])?;
+    let restored = super::compile_saved_profile(&store, None)?;
+    let restored_yaml = manis_profile::render_mihomo_yaml(&restored)?;
+    assert!(
+        restored_yaml
+            .trim_end()
+            .ends_with("\"MATCH,__MANIS_GLOBAL__\""),
+        "{restored_yaml}"
+    );
+
+    fs::remove_dir_all(root)?;
+    Ok(())
+}
+
+#[cfg(not(windows))]
+#[test]
 fn qx_rule_sources_update_interval_and_success_atomically() -> Result<(), Box<dyn std::error::Error>>
 {
     let root = test_temp_dir("manis-qx-rule-refresh");

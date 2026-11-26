@@ -1,10 +1,13 @@
-use gpui::{MouseButton, SharedString};
+use gpui::{MouseButton, SharedString, StatefulInteractiveElement};
 use gpui_component::Disableable;
 
 use crate::components::{
-    ActionRole, StatusTone, card_surface, row_action_button, status_badge, toggle_switch,
+    ActionRole, StatusTone, anchored_popover, card_surface, popover_menu_list, popover_menu_option,
+    row_action_button, status_badge, style_select_trigger, toggle_switch,
 };
 use crate::theme::{ControlSize, MONO_FAMILY};
+
+const FINAL_FALLBACK_POPOVER_ID: &str = "__final_fallback__";
 
 use super::{
     AnyElement, Button, ButtonVariant, ButtonVariants, Collapsible, Context, Div, FluentBuilder,
@@ -46,12 +49,17 @@ impl ManisApp {
             .filter(|source| !source.enabled)
             .map(|source| source.rule_count)
             .sum::<usize>();
+        let regular_manual_count = self
+            .manual_rules
+            .iter()
+            .filter(|rule| !rule.is_final())
+            .count();
         let enabled_manual_count = self
             .manual_rules
             .iter()
-            .filter(|rule| rule.is_enabled())
+            .filter(|rule| !rule.is_final() && rule.is_enabled())
             .count();
-        let disabled_manual_count = self.manual_rules.len() - enabled_manual_count;
+        let disabled_manual_count = regular_manual_count - enabled_manual_count;
         // A disabled group contributes nothing, so all of its rules count as disabled.
         let (enabled_local_count, disabled_local_count) =
             self.local_rule_groups
@@ -83,7 +91,7 @@ impl ManisApp {
         let disabled_manual_count = self
             .manual_rules
             .iter()
-            .filter(|rule| !rule.is_enabled())
+            .filter(|rule| !rule.is_final() && !rule.is_enabled())
             .count();
         self.topology.rule_group_row_bounds.borrow_mut().clear();
         let persisted_order = self.normalized_rule_group_order();
@@ -153,9 +161,8 @@ impl ManisApp {
                 )
                 .mt(Space::Lg.px()),
             );
-        } else {
-            list = list.child(fallback_card(language, theme));
         }
+        list = list.child(self.fallback_card(language, theme, cx));
         list
     }
 
@@ -173,13 +180,18 @@ impl ManisApp {
             ..
         } = view;
         let group_name = language.localized(copy::common::MANUAL_RULES);
-        let detail = copy::configuration::manual_group_detail(
-            language,
-            self.manual_rules.len(),
-            disabled_count,
-        );
+        let regular_count = self
+            .manual_rules
+            .iter()
+            .filter(|rule| !rule.is_final())
+            .count();
+        let detail =
+            copy::configuration::manual_group_detail(language, regular_count, disabled_count);
         let mut rules = Self::rule_group_rows(compact, theme);
         for (index, rule) in self.manual_rules.iter().enumerate() {
+            if rule.is_final() {
+                continue;
+            }
             rules = rules.child(self.manual_routing_rule_row(
                 *rule_order,
                 index,
@@ -344,7 +356,11 @@ impl ManisApp {
     /// The target policy shown on the manual group, when all of its enabled rules share one.
     fn manual_group_target(&self, language: Language) -> Option<String> {
         let mut targets: Vec<String> = Vec::new();
-        for rule in self.manual_rules.iter().filter(|rule| rule.is_enabled()) {
+        for rule in self
+            .manual_rules
+            .iter()
+            .filter(|rule| !rule.is_final() && rule.is_enabled())
+        {
             let target = self.effective_rule_target(rule.target(), language);
             if !targets.contains(&target) {
                 targets.push(target);
@@ -707,44 +723,224 @@ pub(super) fn order_badge(text: impl Into<SharedString>, theme: Theme) -> Div {
         .child(text.into())
 }
 
-/// The pipeline terminator: unmatched traffic always leaves through the global exit.
-fn fallback_card(language: Language, theme: Theme) -> Stateful<Div> {
-    div()
-        .id("routing-rule-fallback")
-        .debug_selector(|| "routing-rule-fallback".to_owned())
-        .flex_shrink_0()
-        .flex()
-        .items_center()
-        .justify_between()
-        .gap(Space::Md.px())
-        .px(Space::Lg.px())
-        .py(px(11.0))
-        .rounded(Radius::Card.px())
-        .border_1()
-        .border_color(theme.outline_strong)
-        .bg(theme.surface_low)
-        .child(
+impl ManisApp {
+    /// The configurable pipeline terminator: decides where traffic that matched no rule above goes.
+    fn fallback_card(
+        &self,
+        language: Language,
+        theme: Theme,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let subtitle = match language {
+            Language::English => "Traffic that matched no rule above",
+            Language::SimplifiedChinese => "未命中以上规则的其余流量",
+        };
+        div()
+            .id("routing-rule-fallback")
+            .debug_selector(|| "routing-rule-fallback".to_owned())
+            .flex_shrink_0()
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap(Space::Md.px())
+            .px(Space::Lg.px())
+            .py(px(11.0))
+            .rounded(Radius::Card.px())
+            .border_1()
+            .border_color(theme.outline_strong)
+            .bg(theme.surface_low)
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(10.0))
+                    .min_w(px(0.0))
+                    .child(order_badge("END", theme))
+                    .child(
+                        div()
+                            .min_w(px(0.0))
+                            .flex()
+                            .flex_col()
+                            .gap(px(2.0))
+                            .child(
+                                div()
+                                    .min_w(px(0.0))
+                                    .text_size(TextRole::Label.size())
+                                    .line_height(TextRole::Label.line_height())
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(theme.text_primary)
+                                    .child(fallback_title(language)),
+                            )
+                            .child(
+                                div()
+                                    .min_w(px(0.0))
+                                    .text_size(TextRole::Metadata.size())
+                                    .line_height(TextRole::Metadata.line_height())
+                                    .text_color(theme.text_tertiary)
+                                    .child(subtitle),
+                            ),
+                    ),
+            )
+            .child(self.final_fallback_target_select(
+                "routing-rule-fallback-target",
+                false,
+                language,
+                theme,
+                cx,
+            ))
+    }
+
+    pub(in crate::app) fn final_fallback_target_select(
+        &self,
+        id_prefix: &str,
+        compact_label: bool,
+        language: Language,
+        theme: Theme,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let enabled = !self.routing_apply_state.is_busy() && !self.configuration_transfer.active;
+        let open = self.rule_sources.target_popover.as_deref() == Some(FINAL_FALLBACK_POPOVER_ID);
+        let current_label = self.final_fallback_target_label(language);
+        let menu = self.final_fallback_target_menu(id_prefix, language, theme, cx);
+        let label_content: AnyElement = if self.routing_apply_state.is_busy() {
+            div()
+                .text_size(px(12.0))
+                .line_height(px(16.0))
+                .text_color(theme.text_tertiary)
+                .child(language.localized(copy::configuration::SAVING))
+                .into_any_element()
+        } else if compact_label {
             div()
                 .flex()
                 .items_center()
-                .gap(px(10.0))
+                .gap(px(4.0))
                 .min_w(px(0.0))
-                .child(order_badge("END", theme))
                 .child(
                     div()
                         .min_w(px(0.0))
-                        .text_size(TextRole::Label.size())
-                        .line_height(TextRole::Label.line_height())
-                        .font_weight(FontWeight::SEMIBOLD)
+                        .max_w(px(108.0))
+                        .overflow_x_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .text_size(px(11.5))
+                        .line_height(px(15.0))
+                        .font_weight(FontWeight::MEDIUM)
                         .text_color(theme.text_primary)
-                        .child(fallback_title(language)),
-                ),
+                        .child(current_label),
+                )
+                .into_any_element()
+        } else {
+            div()
+                .flex()
+                .items_center()
+                .gap(px(5.0))
+                .min_w(px(0.0))
+                .child(
+                    div()
+                        .flex_shrink_0()
+                        .text_size(TextRole::Metadata.size())
+                        .line_height(px(16.0))
+                        .text_color(theme.text_tertiary)
+                        .child(language.message(Message::PolicyGroup)),
+                )
+                .child(
+                    div()
+                        .min_w(px(0.0))
+                        .overflow_x_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .text_size(px(12.5))
+                        .line_height(px(16.0))
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(theme.text_primary)
+                        .child(current_label),
+                )
+                .into_any_element()
+        };
+        let selector = format!("{id_prefix}-select");
+        let trigger = style_select_trigger(
+            Button::new(format!("{id_prefix}-button"))
+                .debug_selector(move || selector)
+                .accessibility_label(match language {
+                    Language::English => "Change target for FINAL fallback rule",
+                    Language::SimplifiedChinese => "更改 FINAL 兜底规则目标策略",
+                })
+                .dropdown_caret(true)
+                .disabled(!enabled)
+                .child(label_content),
+            ControlSize::Compact,
         )
-        .child(status_badge(
-            format!("→ {}", language.localized(copy::configuration::GLOBAL_EXIT)),
-            StatusTone::Route,
-            theme,
-        ))
+        .when(!enabled, gpui::Styled::cursor_default);
+        let app = cx.entity();
+        div()
+            .id(format!("{id_prefix}-wrap"))
+            .flex_shrink_0()
+            .on_click(|_, _, cx| cx.stop_propagation())
+            .child(
+                anchored_popover(format!("{id_prefix}-popover"), trigger, menu, 224.0, 300.0)
+                    .open(open)
+                    .on_open_change(move |is_open, _, cx| {
+                        app.update(cx, |this, cx| {
+                            this.rule_sources.target_popover =
+                                is_open.then(|| FINAL_FALLBACK_POPOVER_ID.to_owned());
+                            cx.notify();
+                        });
+                    }),
+            )
+            .into_any_element()
+    }
+
+    fn final_fallback_target_menu(
+        &self,
+        id_prefix: &str,
+        language: Language,
+        theme: Theme,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let current_raw = self.final_fallback_target_raw();
+        let global_label = language.localized(copy::configuration::GLOBAL_EXIT);
+        let global_detail = match language {
+            Language::English => "Default global node",
+            Language::SimplifiedChinese => "跟随当前全局出口节点",
+        };
+        let global_selector = format!("{id_prefix}-option-global");
+        let mut choices = popover_menu_list(format!("{id_prefix}-menu")).child(
+            popover_menu_option(
+                format!("{id_prefix}-opt-global"),
+                global_label,
+                Some(global_detail.into()),
+                current_raw.is_none(),
+                true,
+                theme,
+                cx.listener(|this, _, _, cx| {
+                    cx.stop_propagation();
+                    this.set_final_fallback_target(None, cx);
+                }),
+            )
+            .debug_selector(move || global_selector),
+        );
+        for target in self.manual_rule_targets() {
+            let selected = current_raw == Some(target.as_str());
+            let target_value = target.clone();
+            let option_selector = format!("{id_prefix}-option-{target}");
+            choices = choices.child(
+                popover_menu_option(
+                    format!("{id_prefix}-opt-{target}"),
+                    target,
+                    None,
+                    selected,
+                    true,
+                    theme,
+                    cx.listener(move |this, _, _, cx| {
+                        cx.stop_propagation();
+                        this.set_final_fallback_target(Some(target_value.as_str()), cx);
+                    }),
+                )
+                .debug_selector(move || option_selector),
+            );
+        }
+        choices
+    }
 }
 
 fn fallback_title(language: Language) -> &'static str {
@@ -832,5 +1028,116 @@ mod tests {
                 "{removed} arrow button must not render"
             );
         }
+    }
+
+    #[gpui::test]
+    fn final_rule_lives_only_on_configurable_end_fallback_card(cx: &mut gpui::TestAppContext) {
+        use std::time::Duration;
+
+        use gpui::Modifiers;
+        use manis_core::ManagedPolicyGroup;
+
+        cx.update(crate::init);
+        let root = std::env::temp_dir().join(format!(
+            "manis-final-fallback-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        let store = root.join("subscriptions");
+        std::fs::create_dir_all(&store).expect("create fixture store");
+        crate::manual_rule::save_manual_rules_in(
+            &store,
+            &[
+                ManualRule::parse(ManualRuleKind::HostSuffix, "example.com", "DIRECT")
+                    .expect("regular rule"),
+                ManualRule::final_rule("Proxy").expect("final rule"),
+            ],
+        )
+        .expect("seed saved manual rules");
+        let mut app = None;
+        let (_, window) = cx.add_window_view(|window, cx| {
+            let entity = cx.new(|_| {
+                let mut app = super::ManisApp::with_fixture_controller_and_subscription_store(
+                    "http://127.0.0.1:1",
+                    store.clone(),
+                );
+                app.primary_workspace = manis_core::PrimaryWorkspace::RoutingRules;
+                app.topology.rules_view = crate::app::WorkspaceViewMode::List;
+                app.managed_policies.groups =
+                    vec![ManagedPolicyGroup::new("p-proxy", "Proxy").expect("policy")];
+                app
+            });
+            app = Some(entity.clone());
+            crate::root(entity, window, cx)
+        });
+        let app = app.expect("fixture app");
+        window.update(|window, cx| window.draw(cx).clear(cx));
+        window.update(|window, cx| window.draw(cx).clear(cx));
+
+        // Regular manual rule #0 renders inside Manual rules, while stored FINAL (#1) does NOT.
+        assert!(
+            window.debug_bounds("manual-routing-rule-0").is_some(),
+            "regular manual rule renders inside Manual rules group"
+        );
+        assert!(
+            window.debug_bounds("manual-routing-rule-1").is_none(),
+            "FINAL must be hidden from Manual rules group"
+        );
+        assert_eq!(
+            app.read_with(window, |app, _| app
+                .final_fallback_target_raw()
+                .map(str::to_owned)),
+            Some("Proxy".to_owned())
+        );
+
+        // Open the configurable END fallback target dropdown and pick DIRECT.
+        let trigger = window
+            .debug_bounds("routing-rule-fallback-target-select")
+            .expect("END fallback target dropdown renders");
+        window.simulate_click(trigger.center(), Modifiers::none());
+        window.update(|window, cx| window.draw(cx).clear(cx));
+        window.executor().advance_clock(Duration::from_millis(180));
+        window.update(|window, cx| window.draw(cx).clear(cx));
+
+        assert!(
+            window
+                .debug_bounds("routing-rule-fallback-target-option-global")
+                .is_some(),
+            "Global exit option appears in END fallback dropdown"
+        );
+        let direct_opt = window
+            .debug_bounds("routing-rule-fallback-target-option-DIRECT")
+            .expect("DIRECT option appears in END fallback dropdown");
+        window.simulate_click(direct_opt.center(), Modifiers::none());
+        window.run_until_parked();
+        assert!(
+            app.read_with(window, |app, _| !app.status.is_empty()),
+            "selecting an END fallback target triggers persistence"
+        );
+
+        // When only a FINAL rule exists and no regular manual rules remain, the Manual rules
+        // group disappears while the END fallback card stays configurable.
+        app.update(window, |app, cx| {
+            app.manual_rules = vec![ManualRule::final_rule("DIRECT").expect("final")];
+            cx.notify();
+        });
+        window.update(|window, cx| window.draw(cx).clear(cx));
+        assert!(
+            window
+                .debug_bounds("rule-group-toggle-routing-manual-rules")
+                .is_none(),
+            "Manual rules group must not render when only FINAL is configured"
+        );
+        assert!(
+            window
+                .debug_bounds("routing-rule-fallback-target-select")
+                .is_some(),
+            "END fallback card stays rendered and configurable without manual rules"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
     }
 }

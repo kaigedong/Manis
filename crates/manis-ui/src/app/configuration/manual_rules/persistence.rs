@@ -117,10 +117,163 @@ impl ManisApp {
         cx.notify();
     }
 
+    pub(in crate::app) fn has_regular_manual_rules(&self) -> bool {
+        self.manual_rules.iter().any(|rule| !rule.is_final())
+    }
+
+    pub(in crate::app) fn final_fallback_target_raw(&self) -> Option<&str> {
+        self.manual_rules
+            .iter()
+            .find(|rule| rule.is_final() && rule.is_enabled())
+            .map(crate::manual_rule::ManualRule::target)
+    }
+
+    pub(in crate::app) fn final_fallback_target_label(
+        &self,
+        language: crate::localization::Language,
+    ) -> String {
+        self.final_fallback_target_raw().map_or_else(
+            || {
+                language
+                    .localized(copy::configuration::GLOBAL_EXIT)
+                    .to_owned()
+            },
+            |target| self.effective_rule_target(target, language),
+        )
+    }
+
+    pub(in crate::app) fn set_final_fallback_target(
+        &mut self,
+        target: Option<&str>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        self.rule_sources.target_popover = None;
+        if self.configuration_transfer.active || self.routing_apply_state.is_busy() {
+            cx.notify();
+            return false;
+        }
+        let has_disabled_final = self
+            .manual_rules
+            .iter()
+            .any(|rule| rule.is_final() && !rule.is_enabled());
+        if self.final_fallback_target_raw() == target && !has_disabled_final {
+            cx.notify();
+            return false;
+        }
+        let next_final = if let Some(name) = target {
+            let Ok(rule) = crate::manual_rule::ManualRule::final_rule(name) else {
+                cx.notify();
+                return false;
+            };
+            Some(rule)
+        } else {
+            None
+        };
+        let previous = self.routing_rollback_snapshot();
+        self.manual_rules.retain(|rule| !rule.is_final());
+        if let Some(rule) = next_final {
+            self.manual_rules.push(rule);
+        }
+        let completion = match self.language() {
+            crate::localization::Language::English => "Fallback rule updated".to_owned(),
+            crate::localization::Language::SimplifiedChinese => "兜底规则已更新".to_owned(),
+        };
+        self.persist_routing_rules(completion, previous, cx)
+    }
+
+    pub(in crate::app) fn update_manual_rule_target(
+        &mut self,
+        rule_index: usize,
+        target: &str,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.configuration_transfer.active || self.routing_apply_state.is_busy() {
+            return false;
+        }
+        let language = self.language();
+        let Some(current_target) = self
+            .manual_rules
+            .get(rule_index)
+            .filter(|rule| !rule.is_final())
+            .map(|rule| self.effective_rule_target(rule.target(), language))
+        else {
+            return false;
+        };
+        if current_target == target {
+            return false;
+        }
+        let previous = self.routing_rollback_snapshot();
+        let Some(rule) = self.manual_rules.get_mut(rule_index) else {
+            return false;
+        };
+        if rule.retarget(target).is_err() {
+            self.restore_routing_rollback(previous);
+            return false;
+        }
+        let completion = language
+            .localized(copy::configuration::MANUAL_RULES_UPDATED)
+            .to_owned();
+        self.persist_routing_rules(completion, previous, cx)
+    }
+
+    pub(in crate::app) fn update_local_rule_group_target(
+        &mut self,
+        group_index: usize,
+        target: &str,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.configuration_transfer.active || self.routing_apply_state.is_busy() {
+            return false;
+        }
+        let language = self.language();
+        let Some(current_target) = self
+            .local_rule_groups
+            .get(group_index)
+            .map(|group| self.effective_rule_target(group.target_policy.as_str(), language))
+        else {
+            return false;
+        };
+        if current_target == target {
+            return false;
+        }
+        let previous = self.routing_rollback_snapshot();
+        let Some(group) = self.local_rule_groups.get_mut(group_index) else {
+            return false;
+        };
+        if group.retarget(target).is_err() {
+            self.restore_routing_rollback(previous);
+            return false;
+        }
+        let completion = language
+            .localized(copy::configuration::MANUAL_RULES_UPDATED)
+            .to_owned();
+        self.persist_routing_rules(completion, previous, cx)
+    }
+
+    pub(in crate::app) fn move_routing_rule_group_step(
+        &mut self,
+        group_id: &str,
+        direction: mihomo::MoveDirection,
+        cx: &mut Context<Self>,
+    ) {
+        if self.configuration_transfer.active || self.routing_apply_state.is_busy() {
+            return;
+        }
+        let mut order = mihomo::normalized_routing_rule_group_order(
+            &self.rule_sources.group_order,
+            self.has_regular_manual_rules(),
+            &self.rule_sources.sources,
+            &self.local_rule_groups,
+        );
+        if mihomo::move_routing_rule_group(&mut order, group_id, direction) {
+            self.apply_routing_rule_group_order(&order, cx);
+        }
+    }
+
     pub(in crate::app) fn sync_routing_rule_group_order(&mut self) {
         self.rule_sources.group_order = mihomo::normalized_routing_rule_group_order(
             &self.rule_sources.group_order,
-            !self.manual_rules.is_empty(),
+            self.has_regular_manual_rules(),
             &self.rule_sources.sources,
             &self.local_rule_groups,
         );
@@ -137,7 +290,7 @@ impl ManisApp {
         self.sync_routing_rule_group_order();
         let normalized = mihomo::normalized_routing_rule_group_order(
             next_order,
-            !self.manual_rules.is_empty(),
+            self.has_regular_manual_rules(),
             &self.rule_sources.sources,
             &self.local_rule_groups,
         );

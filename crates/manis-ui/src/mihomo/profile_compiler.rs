@@ -163,15 +163,16 @@ fn apply_saved_routing(
             "saved routing rule group order could not be read: {error}"
         ))
     })?;
+    let has_regular_manual_rules = manual_rules.iter().any(|rule| !rule.is_final());
     let order = normalized_routing_rule_group_order(
         &stored_order,
-        !manual_rules.is_empty(),
+        has_regular_manual_rules,
         &sources,
         &local_groups,
     );
     for group_id in order {
         if group_id == MANUAL_ROUTING_RULE_GROUP_ID {
-            crate::manual_rule::append_manual_rules(
+            crate::manual_rule::append_manual_non_final_rules(
                 profile,
                 &manual_rules,
                 manis_core::KernelKind::Mihomo,
@@ -190,7 +191,7 @@ fn apply_saved_routing(
                 manis_core::KernelKind::Mihomo,
             )
             .map_err(|error| LoadError::Runtime(error.to_string()))?;
-            // FINAL belongs to the manual list; a stored one cannot silently decide routing.
+            // FINAL is configured on the pipeline fallback node, not inside local groups.
             if skipped > 0 {
                 record_event(
                     LogLevel::Warn,
@@ -200,13 +201,20 @@ fn apply_saved_routing(
             }
         }
     }
-    if let Some(fallback) = bootstrap_fallback
-        && !profile
-            .rules
-            .iter()
-            .any(|rule| matches!(rule, Rule::Match { .. }))
+    crate::manual_rule::apply_manual_final_rule(profile, &manual_rules)
+        .map_err(|error| LoadError::Runtime(error.to_string()))?;
+    if !profile
+        .rules
+        .iter()
+        .any(|rule| matches!(rule, Rule::Match { .. }))
     {
-        profile.rules.push(fallback);
+        if let Some(fallback) = bootstrap_fallback {
+            profile.rules.push(fallback);
+        } else {
+            profile
+                .ensure_global_match()
+                .map_err(|error| LoadError::Runtime(error.to_string()))?;
+        }
     }
     // One gate for every arm: a local group's target can outlive the policy it names, exactly like
     // a source's can, and a dangling policy must fail here instead of reaching the core.

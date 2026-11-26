@@ -168,6 +168,46 @@ fn insert_before_terminal(profile: &mut Profile, compiled: Vec<Rule>) {
     profile.rules.splice(insert_at..insert_at, compiled);
 }
 
+pub(crate) fn append_manual_non_final_rules(
+    profile: &mut Profile,
+    rules: &[ManualRule],
+    kernel: KernelKind,
+) -> Result<(), ManualRuleCompileError> {
+    reject_unsupported_types(rules, kernel)?;
+    let legacy_proxy_target = legacy_proxy_target(profile);
+    let compiled = rules
+        .iter()
+        .filter(|rule| rule.enabled && !rule.is_final())
+        .map(|rule| rule.to_profile_rule(legacy_proxy_target.as_ref()))
+        .collect::<Result<Vec<_>, _>>()?;
+    insert_before_terminal(profile, compiled);
+    Ok(())
+}
+
+pub(crate) fn apply_manual_final_rule(
+    profile: &mut Profile,
+    rules: &[ManualRule],
+) -> Result<(), ManualRuleCompileError> {
+    let legacy_proxy_target = legacy_proxy_target(profile);
+    let mut final_rules = rules.iter().filter(|rule| rule.enabled && rule.is_final());
+    let terminal = final_rules.next();
+    if final_rules.next().is_some() {
+        return Err(ManualRuleCompileError::MultipleFinalRules);
+    }
+    let terminal = terminal
+        .map(|terminal| terminal.to_profile_rule(legacy_proxy_target.as_ref()))
+        .transpose()?;
+
+    if let Some(terminal) = terminal {
+        profile
+            .rules
+            .retain(|rule| !matches!(rule, Rule::Match { .. }));
+        profile.rules.push(terminal);
+    }
+    Ok(())
+}
+
+#[cfg(test)]
 pub(crate) fn append_manual_rules(
     profile: &mut Profile,
     rules: &[ManualRule],
