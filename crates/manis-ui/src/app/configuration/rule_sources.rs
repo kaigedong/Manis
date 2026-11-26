@@ -22,7 +22,7 @@ use crate::{
 use super::{
     QxRuleEditorView, RuleSourceCardPresentation, RuleSourceRefreshPresentation, field_label,
     refresh_interval_label,
-    settings::{SettingsGroupKey, settings_group_card, settings_inset_divider},
+    settings::{SettingsDisclosureHeader, SettingsDisclosureSection, settings_inset_divider},
     source_update_label,
 };
 
@@ -35,32 +35,43 @@ impl ManisApp {
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let language = self.language();
-        let add_action = action_button(
-            "configuration-add-rule-source",
-            language.localized(copy::configuration::ADD_SOURCE),
-            ActionRole::Primary,
-            ControlSize::Compact,
-        )
-        .icon(IconName::Plus)
-        .on_click(cx.listener(move |this, _, window, cx| {
-            this.expand_settings_group(SettingsGroupKey::RuleSources);
-            this.open_new_qx_rule_editor(cx);
-            this.open_qx_rule_source_dialog(window, cx);
-        }));
+        let source_count = self.rule_sources.sources.len();
+        let has_issue = self.rule_sources.sources.iter().any(|source| {
+            matches!(
+                self.rule_sources.refreshes.get(&source.id),
+                Some(QxRuleSourceRefreshState::Failed { .. })
+            )
+        });
+        let add_action = (source_count > 0).then(|| {
+            action_button(
+                "configuration-add-rule-source",
+                language.localized(copy::configuration::ADD_SOURCE),
+                ActionRole::Primary,
+                ControlSize::Compact,
+            )
+            .debug_selector(|| "configuration-add-rule-source".to_owned())
+            .icon(IconName::Plus)
+            .on_click(cx.listener(move |this, _, window, cx| {
+                cx.stop_propagation();
+                this.open_new_qx_rule_editor(cx);
+                this.open_qx_rule_source_dialog(window, cx);
+            }))
+            .into_any_element()
+        });
 
-        self.collapsible_settings_section(
-            SettingsGroupKey::RuleSources,
-            language.localized(copy::configuration::RULE_SOURCES),
-            Some(
-                language
-                    .count(CountNoun::Source, self.rule_sources.sources.len())
-                    .into(),
-            ),
-            Some(add_action.into_any_element()),
+        self.settings_disclosure_card(
+            SettingsDisclosureHeader {
+                section: SettingsDisclosureSection::RuleSources,
+                icon: IconName::Map,
+                title: language.localized(copy::configuration::RULE_SOURCES).into(),
+                summary: language.count(CountNoun::Source, source_count).into(),
+                has_issue,
+                expanded_action: add_action,
+            },
             |cx| {
-                let mut card = settings_group_card("configuration-rule-sources", theme);
+                let mut list = div().w_full().flex().flex_col();
                 if self.rule_sources.sources.is_empty() {
-                    card = card.child(
+                    list = list.child(
                         div().p(Space::Lg.px()).child(empty_state(
                             language.localized(copy::configuration::NO_RULE_SOURCES),
                             language.localized(copy::configuration::ADD_A_REMOTE_QX_RULE_SET),
@@ -84,12 +95,12 @@ impl ManisApp {
                 } else {
                     for (index, source) in self.rule_sources.sources.iter().enumerate() {
                         if index > 0 {
-                            card = card.child(settings_inset_divider(theme, 44.0));
+                            list = list.child(settings_inset_divider(theme, 44.0));
                         }
-                        card = card.child(self.rule_source_card(index, source, busy, theme, cx));
+                        list = list.child(self.rule_source_card(index, source, busy, theme, cx));
                     }
                 }
-                card.into_any_element()
+                list.into_any_element()
             },
             theme,
             cx,

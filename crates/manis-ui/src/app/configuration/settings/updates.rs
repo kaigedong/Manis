@@ -1,13 +1,13 @@
 use gpui::{
-    Div, FontWeight, InteractiveElement, IntoElement, ParentElement, Stateful,
+    FontWeight, InteractiveElement, IntoElement, ParentElement, Stateful,
     StatefulInteractiveElement, Styled, div, img, prelude::FluentBuilder as _, px,
 };
 use gpui_component::{Disableable, Icon, IconName, Sizable, button::Button, spinner::Spinner};
 
 use super::{
-    ActionRole, AppUpdateState, Context, ControlSize, Language, ManisApp, SettingsGroupKey,
-    TextRole, Theme, app_update, copy, settings_group_card, settings_icon_badge,
-    settings_inset_divider, style_action_button,
+    ActionRole, AppUpdateState, Context, ControlSize, Div, Language, ManisApp, TextRole, Theme,
+    app_update, copy, settings_group_card, settings_icon_badge, settings_inset_divider,
+    settings_section_header, style_action_button,
 };
 
 impl ManisApp {
@@ -222,24 +222,24 @@ impl ManisApp {
                     .child(language.localized(copy::app_update::CORE_LICENSE)),
             );
 
-        self.collapsible_settings_section(
-            SettingsGroupKey::Updates,
-            language.localized(copy::app_update::ABOUT_AND_UPDATES),
-            Some(format!("v{}", app_update::current_version()).into()),
-            None,
-            |_cx| {
+        div()
+            .id("configuration-app-update-section")
+            .w_full()
+            .child(settings_section_header(
+                language.localized(copy::app_update::ABOUT_AND_UPDATES),
+                None,
+                None,
+                theme,
+            ))
+            .child(
                 settings_group_card("configuration-app-update", theme)
                     .debug_selector(|| "app-update-panel".to_owned())
                     .child(version_row)
                     .child(settings_inset_divider(theme, 16.0))
                     .child(github_row)
                     .child(settings_inset_divider(theme, 16.0))
-                    .child(licenses_row)
-                    .into_any_element()
-            },
-            theme,
-            cx,
-        )
+                    .child(licenses_row),
+            )
     }
 
     fn app_update_install_action(

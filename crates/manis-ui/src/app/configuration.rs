@@ -41,6 +41,7 @@ pub(in crate::app) use source_mutations::{
 };
 mod transfer;
 
+pub(super) use settings::SettingsDisclosureState;
 pub(super) use transfer::ConfigurationTransfer;
 
 const MAX_MANUAL_RULE_INPUT_BYTES: usize = 1_024;
@@ -939,6 +940,14 @@ mod tests {
             app.update(cx, |app, cx| {
                 assert_eq!(app.primary_workspace, PrimaryWorkspace::Nodes);
                 app.primary_workspace = PrimaryWorkspace::Configuration;
+                // Expand both collapsible source cards so the 5-section document overflows the
+                // default test viewport and exercises directory jumping + wheel scrolling.
+                app.expand_settings_disclosure(
+                    super::settings::SettingsDisclosureSection::ProxySources,
+                );
+                app.expand_settings_disclosure(
+                    super::settings::SettingsDisclosureSection::RuleSources,
+                );
                 cx.notify();
             });
             window.draw(cx).clear(cx);
@@ -1093,7 +1102,9 @@ mod tests {
     }
 
     #[gpui::test]
-    fn settings_groups_collapse_toggle_and_expand_on_navigation(cx: &mut gpui::TestAppContext) {
+    fn source_settings_start_collapsed_and_toggle_on_click_or_navigation(
+        cx: &mut gpui::TestAppContext,
+    ) {
         use crate::app::ManisApp;
         use gpui::{AppContext as _, Modifiers};
         use manis_core::PrimaryWorkspace;
@@ -1111,37 +1122,74 @@ mod tests {
         });
         let app = app.expect("fixture app");
 
-        // Scroll to ProxySources so it is visible in the viewport, then toggle it closed and open.
+        // Both proxy sources and rule sources start collapsed by default.
+        window_cx.update(|window, cx| window.draw(cx).clear(cx));
+        assert!(
+            window_cx
+                .debug_bounds("configuration-source-body")
+                .is_none()
+        );
+        assert!(
+            window_cx
+                .debug_bounds("configuration-rule-sources-body")
+                .is_none()
+        );
+
+        // Scrolling down keeps both collapsed; clicking ProxySources expands it in place.
         window_cx.update(|window, cx| {
             app.update(cx, |app, cx| {
-                app.scroll_to_configuration_section(ConfigurationSection::ProxySources, cx);
+                let max_y = app.configuration_scroll.max_offset().y;
+                app.configuration_scroll
+                    .set_offset(gpui::point(gpui::px(0.0), -max_y));
+                cx.notify();
             });
             window.draw(cx).clear(cx);
         });
-        assert!(window_cx.debug_bounds("configuration-source").is_some());
+        assert!(
+            window_cx
+                .debug_bounds("configuration-source-body")
+                .is_none()
+        );
         let proxy_toggle = window_cx
-            .debug_bounds("settings-group-toggle-proxy-sources")
-            .expect("proxy sources toggle header renders");
+            .debug_bounds("settings-disclosure-proxy-sources")
+            .expect("collapsed proxy sources disclosure row renders");
         window_cx.simulate_click(proxy_toggle.center(), Modifiers::none());
         window_cx.update(|window, cx| window.draw(cx).clear(cx));
         assert!(
-            window_cx.debug_bounds("configuration-source").is_none(),
-            "collapsing proxy sources hides its card body"
+            window_cx
+                .debug_bounds("configuration-source-body")
+                .is_some()
         );
 
-        // Navigating to ProxySources via the directory automatically expands it again.
-        window_cx.update(|window, cx| {
-            app.update(cx, |app, cx| {
-                app.scroll_to_configuration_section(ConfigurationSection::ProxySources, cx);
+        // Clicking "+ Add source" inside the expanded header opens the editor without collapsing.
+        if let Some(add_button) = window_cx.debug_bounds("configuration-add-proxy-source") {
+            window_cx.simulate_click(add_button.center(), Modifiers::none());
+            window_cx.update(|window, cx| {
+                window.draw(cx).clear(cx);
+                assert!(gpui_component::WindowExt::has_active_dialog(window, cx));
+                gpui_component::WindowExt::close_dialog(window, cx);
+                window.draw(cx).clear(cx);
             });
-            window.draw(cx).clear(cx);
-        });
+            assert!(
+                window_cx
+                    .debug_bounds("configuration-source-body")
+                    .is_some()
+            );
+        }
+
+        // Second header click collapses ProxySources again.
+        let proxy_toggle = window_cx
+            .debug_bounds("settings-disclosure-proxy-sources")
+            .expect("expanded proxy sources disclosure row stays visible");
+        window_cx.simulate_click(proxy_toggle.center(), Modifiers::none());
+        window_cx.update(|window, cx| window.draw(cx).clear(cx));
         assert!(
-            window_cx.debug_bounds("configuration-source").is_some(),
-            "directory jump auto-expands a collapsed section"
+            window_cx
+                .debug_bounds("configuration-source-body")
+                .is_none()
         );
 
-        // Rule sources also collapse cleanly on click and re-expand on second click.
+        // Sidebar jump to RuleSources expands it; clicking its header collapses it back.
         window_cx.update(|window, cx| {
             app.update(cx, |app, cx| {
                 app.scroll_to_configuration_section(ConfigurationSection::RuleSources, cx);
@@ -1150,28 +1198,18 @@ mod tests {
         });
         assert!(
             window_cx
-                .debug_bounds("configuration-rule-sources")
+                .debug_bounds("configuration-rule-sources-body")
                 .is_some()
         );
         let rule_toggle = window_cx
-            .debug_bounds("settings-group-toggle-rule-sources")
-            .expect("rule sources toggle header renders");
+            .debug_bounds("settings-disclosure-rule-sources")
+            .expect("rule sources disclosure header renders");
         window_cx.simulate_click(rule_toggle.center(), Modifiers::none());
         window_cx.update(|window, cx| window.draw(cx).clear(cx));
         assert!(
             window_cx
-                .debug_bounds("configuration-rule-sources")
+                .debug_bounds("configuration-rule-sources-body")
                 .is_none()
-        );
-        let rule_toggle = window_cx
-            .debug_bounds("settings-group-toggle-rule-sources")
-            .expect("collapsed rule sources header stays visible");
-        window_cx.simulate_click(rule_toggle.center(), Modifiers::none());
-        window_cx.update(|window, cx| window.draw(cx).clear(cx));
-        assert!(
-            window_cx
-                .debug_bounds("configuration-rule-sources")
-                .is_some()
         );
     }
 

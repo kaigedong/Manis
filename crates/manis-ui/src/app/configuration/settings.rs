@@ -1,7 +1,7 @@
 use gpui::{
     AnyElement, Context, Div, FontWeight, InteractiveElement, IntoElement, KeyDownEvent,
-    ParentElement, Role, SharedString, Stateful, StatefulInteractiveElement, Styled, Window, div,
-    prelude::*, px,
+    MouseButton, ParentElement, Role, SharedString, Stateful, StatefulInteractiveElement, Styled,
+    Window, div, prelude::*, px,
 };
 use gpui_component::{Icon, IconName};
 use manis_core::WindowSizeClass;
@@ -25,114 +25,167 @@ mod routing;
 mod startup;
 mod updates;
 
-/// Collapsible groups within the desktop settings workspace.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum SettingsGroupKey {
-    Language,
-    Startup,
-    Transfer,
-    Runtime,
-    ProxySources,
-    RuleSources,
-    Updates,
+/// Expansion state for collapsible desktop settings cards (collapsed by default).
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(in crate::app) struct SettingsDisclosureState {
+    proxy_sources: bool,
+    rule_sources: bool,
 }
 
-impl SettingsGroupKey {
-    const fn storage_key(self) -> &'static str {
-        match self {
-            Self::Language => "settings-group:language",
-            Self::Startup => "settings-group:startup",
-            Self::Transfer => "settings-group:transfer",
-            Self::Runtime => "settings-group:runtime",
-            Self::ProxySources => "settings-group:proxy-sources",
-            Self::RuleSources => "settings-group:rule-sources",
-            Self::Updates => "settings-group:updates",
+impl SettingsDisclosureState {
+    const fn is_expanded(self, section: SettingsDisclosureSection) -> bool {
+        match section {
+            SettingsDisclosureSection::ProxySources => self.proxy_sources,
+            SettingsDisclosureSection::RuleSources => self.rule_sources,
         }
     }
 
+    const fn toggle(&mut self, section: SettingsDisclosureSection) {
+        match section {
+            SettingsDisclosureSection::ProxySources => self.proxy_sources = !self.proxy_sources,
+            SettingsDisclosureSection::RuleSources => self.rule_sources = !self.rule_sources,
+        }
+    }
+
+    const fn expand(&mut self, section: SettingsDisclosureSection) {
+        match section {
+            SettingsDisclosureSection::ProxySources => self.proxy_sources = true,
+            SettingsDisclosureSection::RuleSources => self.rule_sources = true,
+        }
+    }
+}
+
+/// Settings sections that render as collapsed-by-default inset disclosure cards.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum SettingsDisclosureSection {
+    ProxySources,
+    RuleSources,
+}
+
+impl SettingsDisclosureSection {
     const fn section_id(self) -> &'static str {
         match self {
-            Self::Language => "configuration-language-section",
-            Self::Startup => "configuration-startup-section",
-            Self::Transfer => "configuration-transfer-section",
-            Self::Runtime => "configuration-kernel-section",
             Self::ProxySources => "configuration-proxy-sources-section",
             Self::RuleSources => "configuration-rule-sources-section",
-            Self::Updates => "configuration-app-update-section",
+        }
+    }
+
+    const fn card_id(self) -> &'static str {
+        match self {
+            Self::ProxySources => "configuration-source",
+            Self::RuleSources => "configuration-rule-sources",
         }
     }
 
     const fn toggle_id(self) -> &'static str {
         match self {
-            Self::Language => "settings-group-toggle-language",
-            Self::Startup => "settings-group-toggle-startup",
-            Self::Transfer => "settings-group-toggle-transfer",
-            Self::Runtime => "settings-group-toggle-runtime",
-            Self::ProxySources => "settings-group-toggle-proxy-sources",
-            Self::RuleSources => "settings-group-toggle-rule-sources",
-            Self::Updates => "settings-group-toggle-updates",
+            Self::ProxySources => "settings-disclosure-proxy-sources",
+            Self::RuleSources => "settings-disclosure-rule-sources",
+        }
+    }
+
+    const fn body_id(self) -> &'static str {
+        match self {
+            Self::ProxySources => "configuration-source-body",
+            Self::RuleSources => "configuration-rule-sources-body",
         }
     }
 }
 
+/// Header configuration for a collapsible inset settings disclosure card.
+pub(super) struct SettingsDisclosureHeader {
+    pub(super) section: SettingsDisclosureSection,
+    pub(super) icon: IconName,
+    pub(super) title: SharedString,
+    pub(super) summary: SharedString,
+    pub(super) has_issue: bool,
+    pub(super) expanded_action: Option<AnyElement>,
+}
+
 impl ManisApp {
-    pub(super) fn is_settings_group_expanded(&self, group: SettingsGroupKey) -> bool {
-        !self.node_workspace.is_group_collapsed(group.storage_key())
+    pub(super) const fn is_settings_disclosure_expanded(
+        &self,
+        section: SettingsDisclosureSection,
+    ) -> bool {
+        self.settings_disclosure.is_expanded(section)
     }
 
-    pub(super) fn toggle_settings_group(
+    pub(super) fn toggle_settings_disclosure(
         &mut self,
-        group: SettingsGroupKey,
+        section: SettingsDisclosureSection,
         cx: &mut Context<Self>,
     ) {
-        self.node_workspace.toggle_group(group.storage_key());
+        self.settings_disclosure.toggle(section);
         cx.notify();
     }
 
-    pub(super) fn expand_settings_group(&mut self, group: SettingsGroupKey) {
-        if self.node_workspace.is_group_collapsed(group.storage_key()) {
-            self.node_workspace.toggle_group(group.storage_key());
-        }
+    pub(super) const fn expand_settings_disclosure(&mut self, section: SettingsDisclosureSection) {
+        self.settings_disclosure.expand(section);
     }
 
-    pub(super) fn expand_configuration_section_groups(&mut self, section: ConfigurationSection) {
+    pub(super) const fn expand_configuration_section_disclosure(
+        &mut self,
+        section: ConfigurationSection,
+    ) {
         match section {
-            ConfigurationSection::General => {
-                self.expand_settings_group(SettingsGroupKey::Language);
-                self.expand_settings_group(SettingsGroupKey::Startup);
-                self.expand_settings_group(SettingsGroupKey::Transfer);
-            }
-            ConfigurationSection::Runtime => self.expand_settings_group(SettingsGroupKey::Runtime),
             ConfigurationSection::ProxySources => {
-                self.expand_settings_group(SettingsGroupKey::ProxySources);
+                self.expand_settings_disclosure(SettingsDisclosureSection::ProxySources);
             }
             ConfigurationSection::RuleSources => {
-                self.expand_settings_group(SettingsGroupKey::RuleSources);
+                self.expand_settings_disclosure(SettingsDisclosureSection::RuleSources);
             }
-            ConfigurationSection::Updates => self.expand_settings_group(SettingsGroupKey::Updates),
+            ConfigurationSection::General
+            | ConfigurationSection::Runtime
+            | ConfigurationSection::Updates => {}
         }
     }
 
-    /// Renders a settings section with a clickable disclosure header above its inset group card.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "Keeps the shared collapsible section builder explicit at each settings call site"
-    )]
-    pub(super) fn collapsible_settings_section(
+    /// Renders a collapsed-by-default inset settings card modeled after mobile grouped disclosure
+    /// rows: icon badge, title, right-aligned count summary, and chevron that expands in place.
+    pub(super) fn settings_disclosure_card(
         &self,
-        group: SettingsGroupKey,
-        title: impl Into<SharedString>,
-        detail: Option<SharedString>,
-        action: Option<AnyElement>,
+        header: SettingsDisclosureHeader,
         body: impl FnOnce(&mut Context<Self>) -> AnyElement,
         theme: Theme,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let title = title.into();
-        let expanded = self.is_settings_group_expanded(group);
-        let toggle_id = group.toggle_id();
+        let section = header.section;
+        let expanded = self.is_settings_disclosure_expanded(section);
+        let body_id = section.body_id();
+        let header_row = Self::settings_disclosure_header_row(header, expanded, theme, cx);
 
-        let trigger = div()
+        div().id(section.section_id()).w_full().child(
+            settings_group_card(section.card_id(), theme)
+                .child(header_row)
+                .when(expanded, |card| {
+                    card.child(
+                        div()
+                            .w_full()
+                            .h(px(1.0))
+                            .bg(gpui::Hsla::from(theme.outline_subtle).opacity(0.55)),
+                    )
+                    .child(
+                        div()
+                            .id(body_id)
+                            .debug_selector(move || body_id.to_owned())
+                            .w_full()
+                            .child(body(cx)),
+                    )
+                }),
+        )
+    }
+
+    fn settings_disclosure_header_row(
+        header: SettingsDisclosureHeader,
+        expanded: bool,
+        theme: Theme,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let section = header.section;
+        let toggle_id = section.toggle_id();
+        let title = header.title;
+
+        div()
             .id(toggle_id)
             .debug_selector(move || toggle_id.to_owned())
             .role(Role::Button)
@@ -142,85 +195,140 @@ impl ManisApp {
             .focusable()
             .map(crate::components::primary_button_interaction)
             .cursor_pointer()
-            .ml(px(-6.0))
-            .px(px(6.0))
-            .py(px(3.0))
-            .rounded(px(7.0))
-            .hover(move |row| row.bg(theme.surface_low))
-            .flex()
-            .items_center()
-            .gap(px(6.0))
-            .child(
-                Icon::new(if expanded {
-                    IconName::ChevronDown
-                } else {
-                    IconName::ChevronRight
-                })
-                .size(px(13.0))
-                .flex_shrink_0()
-                .text_color(theme.text_tertiary),
-            )
-            .child(
-                div()
-                    .text_size(px(13.0))
-                    .line_height(px(18.0))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(theme.text_secondary)
-                    .child(title),
-            )
-            .when_some(detail, |row, detail| {
-                row.child(
-                    div()
-                        .ml(px(2.0))
-                        .font_family(crate::theme::MONO_FAMILY)
-                        .text_size(px(11.5))
-                        .line_height(px(16.0))
-                        .text_color(theme.text_tertiary)
-                        .child(detail),
-                )
-            })
-            .on_click(cx.listener(move |this, _, _, cx| {
-                this.toggle_settings_group(group, cx);
-            }))
-            .on_key_down(cx.listener(move |this, event: &KeyDownEvent, _, cx| {
-                if matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                    this.toggle_settings_group(group, cx);
-                    cx.stop_propagation();
-                }
-            }));
-
-        let header = div()
             .w_full()
-            .px(px(4.0))
-            .mb(if expanded { px(8.0) } else { px(0.0) })
-            .pb(if expanded { px(0.0) } else { px(10.0) })
-            .when(!expanded, |row| {
-                row.border_b_1()
-                    .border_color(gpui::Hsla::from(theme.outline_subtle).opacity(0.45))
-            })
-            .min_h(px(28.0))
+            .min_h(px(54.0))
+            .px(px(16.0))
+            .py(px(11.0))
+            .hover(move |row| row.bg(theme.surface_low))
+            .focus_visible(move |row| row.bg(theme.surface_low))
             .flex()
             .items_center()
             .justify_between()
-            .gap(Space::Md.px())
+            .gap(px(12.0))
             .child(
                 div()
                     .flex_1()
                     .min_w(px(0.0))
                     .flex()
                     .items_center()
-                    .child(trigger),
+                    .gap(px(12.0))
+                    .child(settings_icon_badge(header.icon, theme))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(0.0))
+                            .overflow_x_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .text_size(px(13.5))
+                            .line_height(px(19.0))
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(theme.text_primary)
+                            .child(title),
+                    ),
             )
-            .when_some(action, |row, action| {
-                row.child(div().flex_shrink_0().child(action))
-            });
-
-        div()
-            .id(group.section_id())
-            .w_full()
-            .child(header)
-            .when(expanded, |section| section.child(body(cx)))
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .flex()
+                    .items_center()
+                    .gap(px(10.0))
+                    .when(!expanded && header.has_issue, |row| {
+                        row.child(div().size(px(6.0)).rounded_full().bg(theme.status_error))
+                    })
+                    .child(
+                        div()
+                            .text_size(px(12.5))
+                            .line_height(px(18.0))
+                            .text_color(if !expanded && header.has_issue {
+                                theme.status_error
+                            } else {
+                                theme.text_tertiary
+                            })
+                            .child(header.summary),
+                    )
+                    .when_some(
+                        header.expanded_action.filter(|_| expanded),
+                        |row, action| {
+                            row.child(
+                                div()
+                                    .flex_shrink_0()
+                                    .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                                        cx.stop_propagation();
+                                    })
+                                    .child(action),
+                            )
+                        },
+                    )
+                    .child(
+                        Icon::new(if expanded {
+                            IconName::ChevronDown
+                        } else {
+                            IconName::ChevronRight
+                        })
+                        .size(px(14.0))
+                        .flex_shrink_0()
+                        .text_color(gpui::Hsla::from(theme.text_tertiary).opacity(0.75)),
+                    ),
+            )
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.toggle_settings_disclosure(section, cx);
+            }))
+            .on_key_down(cx.listener(move |this, event: &KeyDownEvent, _, cx| {
+                if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                    this.toggle_settings_disclosure(section, cx);
+                    cx.stop_propagation();
+                }
+            }))
     }
+}
+
+/// External section heading that floats quietly above a settings group card.
+pub(super) fn settings_section_header(
+    title: impl Into<SharedString>,
+    detail: Option<SharedString>,
+    action: Option<AnyElement>,
+    theme: Theme,
+) -> Div {
+    let title = title.into();
+    div()
+        .w_full()
+        .px(px(4.0))
+        .mb(px(8.0))
+        .min_h(px(28.0))
+        .flex()
+        .items_center()
+        .justify_between()
+        .gap(Space::Md.px())
+        .child(
+            div()
+                .flex_1()
+                .min_w(px(0.0))
+                .flex()
+                .items_center()
+                .gap(px(8.0))
+                .child(
+                    div()
+                        .text_size(px(13.0))
+                        .line_height(px(18.0))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(theme.text_secondary)
+                        .child(title),
+                )
+                .when_some(detail, |row, detail| {
+                    row.child(
+                        div()
+                            .font_family(crate::theme::MONO_FAMILY)
+                            .text_size(px(11.5))
+                            .line_height(px(16.0))
+                            .text_color(theme.text_tertiary)
+                            .child(detail),
+                    )
+                }),
+        )
+        .when_some(action, |row, action| {
+            row.child(div().flex_shrink_0().child(action))
+        })
 }
 
 /// A calm inset-grouped settings card: pure elevated surface with crisp rounded corners and

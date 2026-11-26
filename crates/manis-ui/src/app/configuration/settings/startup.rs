@@ -1,9 +1,12 @@
-use gpui::{AnyElement, Context, Div, IntoElement, ParentElement, Stateful};
+use gpui::{
+    AnyElement, Context, Div, InteractiveElement as _, IntoElement, ParentElement, Stateful,
+    Styled, div,
+};
 use gpui_component::IconName;
 
 use super::{
-    ManisApp, MihomoCoreUpdateState, SettingsGroupKey, Theme, copy, settings_group_card,
-    settings_inset_divider, settings_row,
+    ManisApp, MihomoCoreUpdateState, Theme, copy, settings_group_card, settings_inset_divider,
+    settings_row, settings_section_header,
 };
 use crate::auto_connect;
 use crate::autostart;
@@ -23,12 +26,16 @@ impl ManisApp {
         let auto_connect_enabled = self.auto_connect.enabled;
         let auto_connect_available = self.subscription_store_dir.is_some();
 
-        self.collapsible_settings_section(
-            SettingsGroupKey::Startup,
-            language.localized(copy::configuration::STARTUP),
-            None,
-            None,
-            |cx| {
+        div()
+            .id("configuration-startup-section")
+            .w_full()
+            .child(settings_section_header(
+                language.localized(copy::configuration::STARTUP),
+                None,
+                None,
+                theme,
+            ))
+            .child(
                 settings_group_card("configuration-startup", theme)
                     .child(settings_row(
                         IconName::Play,
@@ -58,12 +65,8 @@ impl ManisApp {
                             |this, cx| this.set_auto_connect(!this.auto_connect.enabled, cx),
                         ),
                         theme,
-                    ))
-                    .into_any_element()
-            },
-            theme,
-            cx,
-        )
+                    )),
+            )
     }
 
     fn startup_switch(

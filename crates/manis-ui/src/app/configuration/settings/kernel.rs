@@ -1,10 +1,10 @@
-use gpui::{Div, IntoElement, ParentElement, Stateful, prelude::*};
+use gpui::{Div, IntoElement, ParentElement, Stateful, Styled, div, prelude::*};
 use gpui_component::{Disableable, IconName, button::Button};
 use manis_core::ProxyMode;
 
 use super::{
-    ActionRole, Context, ControlSize, Language, ManisApp, MihomoCoreUpdateState, SettingsGroupKey,
-    Theme, copy, settings_group_card, settings_row, style_action_button,
+    ActionRole, Context, ControlSize, Language, ManisApp, MihomoCoreUpdateState, Theme, copy,
+    settings_group_card, settings_row, settings_section_header, style_action_button,
 };
 
 impl ManisApp {
@@ -16,19 +16,19 @@ impl ManisApp {
     ) -> Stateful<Div> {
         let language = self.language();
         let runtime_name = self.runtime.kind().display_name();
-        self.collapsible_settings_section(
-            SettingsGroupKey::Runtime,
-            language.localized(copy::configuration::RUNTIME),
-            Some(runtime_name.into()),
-            None,
-            |cx| {
+        div()
+            .id("configuration-kernel-section")
+            .w_full()
+            .child(settings_section_header(
+                language.localized(copy::configuration::RUNTIME),
+                Some(runtime_name.into()),
+                None,
+                theme,
+            ))
+            .child(
                 settings_group_card("configuration-kernel", theme)
-                    .child(self.mihomo_core_update_row(language, theme, cx))
-                    .into_any_element()
-            },
-            theme,
-            cx,
-        )
+                    .child(self.mihomo_core_update_row(language, theme, cx)),
+            )
     }
 
     fn mihomo_core_update_row(

@@ -17,7 +17,7 @@ use crate::{
 };
 
 use super::settings::{
-    SettingsGroupKey, settings_group_card, settings_inset_divider, settings_row,
+    settings_group_card, settings_inset_divider, settings_row, settings_section_header,
 };
 
 #[derive(Default)]
@@ -265,12 +265,16 @@ impl ManisApp {
             .and_then(|store| crate::config_backup::backup_root(store).ok())
             .filter(|path| path.is_dir());
 
-        self.collapsible_settings_section(
-            SettingsGroupKey::Transfer,
-            language.localized(copy::backup::TITLE),
-            None,
-            None,
-            |_cx| {
+        div()
+            .id("configuration-transfer-section")
+            .w_full()
+            .child(settings_section_header(
+                language.localized(copy::backup::TITLE),
+                None,
+                None,
+                theme,
+            ))
+            .child(
                 settings_group_card("configuration-transfer", theme)
                     .child(settings_row(
                         IconName::HardDrive,
@@ -297,12 +301,8 @@ impl ManisApp {
                                 open_backups,
                                 theme,
                             ))
-                    })
-                    .into_any_element()
-            },
-            theme,
-            cx,
-        )
+                    }),
+            )
     }
 
     pub(super) fn configuration_mutation_busy(&self) -> bool {
