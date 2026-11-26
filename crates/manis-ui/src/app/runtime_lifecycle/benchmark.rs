@@ -38,12 +38,21 @@ impl ManisApp {
             let group = self
                 .policy_groups()
                 .find(|group| group.name == managed.name)?;
+            // If every physical node in this group already has a fresh shared latency record AND
+            // the group's current exit is already healthy within tolerance, reuse those shared
+            // measurements instead of redundantly re-testing the same nodes per policy group.
+            if self.group_nodes_fresh_in_shared_cache(group, now, managed.test_interval_secs)
+                && !self.url_test_group_needs_refresh(group)
+            {
+                return None;
+            }
             let key = Self::policy_group_benchmark_key(&group.id);
-            self.managed_policies
+            let group_due = self
+                .managed_policies
                 .benchmarks
                 .get(&key)
-                .is_none_or(|state| state.is_due(now, managed.test_interval_secs))
-                .then(|| group.id.clone())
+                .is_none_or(|state| state.is_due(now, managed.test_interval_secs));
+            (group_due || self.url_test_group_needs_refresh(group)).then(|| group.id.clone())
         });
         if let Some(id) = due_policy {
             self.start_policy_group_benchmark_with_ip_refresh(&id, false, cx);
@@ -115,12 +124,17 @@ impl ManisApp {
         let group_name = group.name.clone();
         let group_kind = group.kind;
         let total = targets.len();
+        let tested_nodes = targets
+            .iter()
+            .map(|target| target.name().to_owned())
+            .collect::<Vec<_>>();
         let run = PolicyBenchmarkRun {
             key,
             generation,
             group_id,
             group_kind,
             total,
+            tested_nodes,
             refresh_exit_ip,
         };
         let executor = cx.background_executor().clone();
@@ -161,6 +175,7 @@ impl ManisApp {
             group_id,
             group_kind,
             total,
+            tested_nodes,
             refresh_exit_ip,
         } = run;
         let language = self.language();
@@ -184,10 +199,11 @@ impl ManisApp {
                 )
             }
         };
-        if let Some(delays) = delays.as_ref()
-            && let Some(catalog) = self.catalog.as_mut()
-        {
-            let _ = catalog.apply_group_benchmark(&group_id, current.as_deref(), delays);
+        if let Some(delays) = delays.as_ref() {
+            if let Some(catalog) = self.catalog.as_mut() {
+                let _ = catalog.apply_group_benchmark(&group_id, current.as_deref(), delays);
+            }
+            self.record_shared_node_latencies(&tested_nodes, delays, benchmark_timestamp());
         }
         let confirmed_current = current.as_deref().filter(|name| {
             delays.as_ref().is_some_and(|delays| {
@@ -207,6 +223,7 @@ impl ManisApp {
                 ),
             );
         }
+        let has_delays = delays.is_some();
         let Some(state) = self.managed_policies.benchmarks.get_mut(&key) else {
             cx.notify();
             return;
@@ -218,26 +235,9 @@ impl ManisApp {
         if !accepted {
             return;
         }
-        match state {
-            GroupBenchmarkState::Complete { summary, .. } => {
-                trace_ui(UiEvent::GroupBenchmarkSucceeded);
-                self.status = Self::policy_benchmark_status(
-                    language,
-                    group_kind,
-                    confirmed_current,
-                    *summary,
-                );
-            }
-            GroupBenchmarkState::Failed { .. } => {
-                trace_ui(UiEvent::GroupBenchmarkFailed);
-                self.status = format!(
-                    "{}：{}",
-                    language.localized(copy::app::POLICY_GROUP_BENCHMARK_FAILED),
-                    failure.as_deref().unwrap_or_else(|| {
-                        language.localized(copy::common::MIHOMO_DID_NOT_RETURN_A_RESULT)
-                    })
-                );
-            }
+        let completed_summary = match state {
+            GroupBenchmarkState::Complete { summary, .. } => Some(*summary),
+            GroupBenchmarkState::Failed { .. } => None,
             GroupBenchmarkState::Idle | GroupBenchmarkState::Running { .. } => {
                 record_event(
                     LogLevel::Warn,
@@ -246,6 +246,23 @@ impl ManisApp {
                 );
                 return;
             }
+        };
+        if let Some(summary) = completed_summary {
+            trace_ui(UiEvent::GroupBenchmarkSucceeded);
+            self.status =
+                Self::policy_benchmark_status(language, group_kind, confirmed_current, summary);
+            if has_delays {
+                self.sync_affected_url_test_groups(&tested_nodes, Some(&group_id), cx);
+            }
+        } else {
+            trace_ui(UiEvent::GroupBenchmarkFailed);
+            self.status = format!(
+                "{}：{}",
+                language.localized(copy::app::POLICY_GROUP_BENCHMARK_FAILED),
+                failure.as_deref().unwrap_or_else(|| {
+                    language.localized(copy::common::MIHOMO_DID_NOT_RETURN_A_RESULT)
+                })
+            );
         }
         self.persist_group_benchmarks();
         self.start_exit_ip_probe(successful_exit_ip_targets, refresh_exit_ip, cx);

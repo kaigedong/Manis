@@ -1,6 +1,6 @@
 use super::{
     BTreeMap, Context, GroupBenchmarkState, MAX_GROUP_BENCHMARK_NODES, ManisApp, ProxyDelayTarget,
-    UiEvent, copy, mihomo, trace_ui,
+    UiEvent, benchmark_timestamp, copy, mihomo, trace_ui,
 };
 
 impl ManisApp {
@@ -72,6 +72,10 @@ impl ManisApp {
             std::sync::Arc::new(std::sync::Mutex::new(std::collections::VecDeque::new()));
         self.poll_group_benchmark_progress(generation, key.clone(), progress.clone(), cx);
         let total = targets.len();
+        let tested_nodes = targets
+            .iter()
+            .map(|target| target.name().to_owned())
+            .collect::<Vec<_>>();
         let exit_ip_targets = targets.clone();
         let executor = cx.background_executor().clone();
         cx.spawn(async move |this, cx| {
@@ -92,6 +96,7 @@ impl ManisApp {
                     &key,
                     generation,
                     total,
+                    &tested_nodes,
                     result,
                     exit_ip_targets,
                     cx,
@@ -103,11 +108,16 @@ impl ManisApp {
         cx.notify();
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Completes a source benchmark with generation guard, tested node names, delays, and exit IP targets"
+    )]
     pub(in crate::app) fn finish_source_group_benchmark(
         &mut self,
         key: &str,
         generation: u64,
         total: usize,
+        tested_nodes: &[String],
         result: Result<BTreeMap<String, u16>, mihomo::LoadError>,
         exit_ip_targets: Vec<ProxyDelayTarget>,
         cx: &mut Context<Self>,
@@ -117,10 +127,6 @@ impl ManisApp {
             return;
         }
         self.managed_policies.active_benchmark_generation = None;
-        let Some(state) = self.managed_policies.benchmarks.get_mut(key) else {
-            cx.notify();
-            return;
-        };
         let failure = result
             .as_ref()
             .err()
@@ -134,6 +140,11 @@ impl ManisApp {
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
+        let measured_delays = result.as_ref().ok().cloned();
+        let Some(state) = self.managed_policies.benchmarks.get_mut(key) else {
+            cx.notify();
+            return;
+        };
         let accepted = match result {
             Ok(delays) => state.complete(generation, total, delays),
             Err(_error) => state.fail(generation, failure.clone()),
@@ -141,26 +152,31 @@ impl ManisApp {
         if !accepted {
             return;
         }
-        match state {
-            GroupBenchmarkState::Complete { summary, .. } => {
-                trace_ui(UiEvent::GroupBenchmarkSucceeded);
-                self.status = format!(
-                    "{}: {}",
-                    language.localized(copy::nodes::SOURCE_TEST_COMPLETED),
-                    Self::success_fraction_label(summary.succeeded, summary.total, language)
-                );
-            }
-            GroupBenchmarkState::Failed { .. } => {
-                trace_ui(UiEvent::GroupBenchmarkFailed);
-                self.status = format!(
-                    "{}：{}",
-                    language.localized(copy::nodes::SOURCE_TEST_FAILED),
-                    failure.as_deref().unwrap_or_else(|| {
-                        language.localized(copy::common::MIHOMO_DID_NOT_RETURN_A_RESULT)
-                    })
-                );
-            }
+        let succeeded_summary = match state {
+            GroupBenchmarkState::Complete { summary, .. } => Some(*summary),
+            GroupBenchmarkState::Failed { .. } => None,
             _ => return,
+        };
+        if let Some(summary) = succeeded_summary {
+            trace_ui(UiEvent::GroupBenchmarkSucceeded);
+            self.status = format!(
+                "{}: {}",
+                language.localized(copy::nodes::SOURCE_TEST_COMPLETED),
+                Self::success_fraction_label(summary.succeeded, summary.total, language)
+            );
+            if let Some(delays) = measured_delays.as_ref() {
+                self.record_shared_node_latencies(tested_nodes, delays, benchmark_timestamp());
+                self.sync_affected_url_test_groups(tested_nodes, None, cx);
+            }
+        } else {
+            trace_ui(UiEvent::GroupBenchmarkFailed);
+            self.status = format!(
+                "{}：{}",
+                language.localized(copy::nodes::SOURCE_TEST_FAILED),
+                failure.as_deref().unwrap_or_else(|| {
+                    language.localized(copy::common::MIHOMO_DID_NOT_RETURN_A_RESULT)
+                })
+            );
         }
         self.persist_group_benchmarks();
         self.start_exit_ip_probe(successful_exit_ip_targets, true, cx);

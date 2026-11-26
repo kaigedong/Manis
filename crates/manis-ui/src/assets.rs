@@ -15,7 +15,7 @@ pub struct Assets;
 // The default component bundle omits the full catalog. Embed these extra Lucide icons.
 gpui_component_assets::icon_assets!(
     ExtraIcons,
-    [GripVertical, LayoutList, Network, Pin, Workflow]
+    [GripVertical, LayoutList, Network, Pin, Workflow, Zap]
 );
 
 impl AssetSource for Assets {
@@ -53,6 +53,7 @@ mod tests {
             gpui_component_assets::IconName::Network,
             gpui_component_assets::IconName::Pin,
             gpui_component_assets::IconName::Workflow,
+            gpui_component_assets::IconName::Zap,
         ] {
             let path = icon.path();
             assert!(Assets.load(&path).unwrap().is_some(), "missing {path}");

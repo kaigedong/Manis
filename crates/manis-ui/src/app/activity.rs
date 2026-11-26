@@ -16,7 +16,7 @@ use super::{ManisApp, ManualRulePrefill, format_bytes};
 use crate::{
     components::{
         ActionRole, RouteSegmentKind, StatusTone, action_button, card_surface, empty_state,
-        latency_pill, route_arrow, route_segment, status_badge,
+        latency_pill_with_tooltip, route_arrow, route_segment, status_badge,
     },
     localization::{Language, Message, copy},
     theme::{ControlSize, MONO_FAMILY, Space, TextRole, Theme},
@@ -307,7 +307,7 @@ impl ManisApp {
                     )
                     .child(traffic_cell(connection, theme)),
             )
-            .child(self.route_chain_row(&chain, language, theme));
+            .child(self.route_chain_row(&chain, index, language, theme));
         if let Some(draft) = draft {
             let RuleDraft {
                 kind,
@@ -332,7 +332,13 @@ impl ManisApp {
     }
 
     /// The signature Route Truth Chain: matched rule, policy group, then the observed exit.
-    fn route_chain_row(&self, chain: &RouteChain, language: Language, theme: Theme) -> Div {
+    fn route_chain_row(
+        &self,
+        chain: &RouteChain,
+        row_index: usize,
+        language: Language,
+        theme: Theme,
+    ) -> Div {
         let mut line = div()
             .flex()
             .items_center()
@@ -367,7 +373,7 @@ impl ManisApp {
                 theme,
             )),
             Some(node) => {
-                let latency = self.exit_latency(node);
+                let (latency, measured_at) = self.exit_latency(node);
                 line.child(route_arrow(theme))
                     .child(route_segment(
                         node.to_owned(),
@@ -375,7 +381,13 @@ impl ManisApp {
                         latency,
                         theme,
                     ))
-                    .child(latency_pill(latency, theme))
+                    .child(latency_pill_with_tooltip(
+                        format!("activity-latency-{row_index}"),
+                        latency,
+                        measured_at,
+                        language,
+                        theme,
+                    ))
             }
             // The kernel reported no route for this connection, so the chain says so instead
             // of claiming an exit it never observed.
@@ -388,13 +400,15 @@ impl ManisApp {
         }
     }
 
-    /// The last measured delay for an exit the catalog still lists.
-    fn exit_latency(&self, node: &str) -> Option<u64> {
-        self.policy_groups()
+    /// The last measured delay and measurement timestamp for an exit node.
+    fn exit_latency(&self, node: &str) -> (Option<u64>, Option<u64>) {
+        let catalog_ms = self
+            .policy_groups()
             .flat_map(|group| group.nodes.iter())
             .find(|candidate| candidate.name == node)
             .and_then(|candidate| candidate.latency_ms)
-            .map(u64::from)
+            .map(u64::from);
+        self.resolved_policy_exit_latency(node, catalog_ms)
     }
 }
 

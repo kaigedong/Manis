@@ -21,8 +21,8 @@ use crate::{
         presentation::policy_kind_label,
     },
     components::{
-        ActionRole, RouteSegmentKind, StatusTone, action_button, card_surface, empty_state,
-        region_code_badge, route_segment, status_badge,
+        ActionRole, RouteSegmentKind, StatusTone, action_button, card_surface,
+        compact_latency_badge, empty_state, region_code_badge, route_segment, status_badge,
     },
     localization::{Language, Message, copy},
     manual_rule::ManualRule,
@@ -97,11 +97,20 @@ enum RuleColumnEntry {
     Single(RuleTreeItem),
 }
 
+struct PolicyLookupEntry {
+    strategy: String,
+    exit_name: String,
+    latency_ms: Option<u64>,
+    latency_measured_at: Option<u64>,
+    protocol: String,
+}
+
 struct PolicySlot {
     name: String,
     strategy: String,
     exit_name: String,
     latency_ms: Option<u64>,
+    latency_measured_at: Option<u64>,
     is_direct: bool,
     is_reject: bool,
 }
@@ -111,6 +120,7 @@ struct ActiveExitSlot {
     region: String,
     protocol: String,
     latency_ms: Option<u64>,
+    latency_measured_at: Option<u64>,
     serving_count: usize,
     is_direct: bool,
     is_reject: bool,
@@ -575,8 +585,7 @@ impl ManisApp {
         preview_order: Option<&[String]>,
     ) -> RulesTreeData {
         // 1. Gather policy group active exits from live catalog or offline managed groups.
-        let mut policy_lookup: BTreeMap<String, (String, String, Option<u64>, String)> =
-            BTreeMap::new();
+        let mut policy_lookup: BTreeMap<String, PolicyLookupEntry> = BTreeMap::new();
         let mut policy_order: Vec<String> = Vec::new();
         let managed_policy_names: BTreeSet<String> = self
             .managed_policies
@@ -593,7 +602,9 @@ impl ManisApp {
                 let selected = self.selected_node_for_policy(group);
                 let exit_name =
                     selected.map_or_else(|| DIRECT_TARGET.to_owned(), |node| node.name.clone());
-                let latency_ms = selected.and_then(|node| node.latency_ms).map(u64::from);
+                let (latency_ms, latency_measured_at) = selected.map_or((None, None), |node| {
+                    self.resolved_policy_exit_latency(&node.name, node.latency_ms.map(u64::from))
+                });
                 let protocol = selected
                     .map(|node| compact_protocol_label(&node.detail))
                     .unwrap_or_default();
@@ -601,7 +612,13 @@ impl ManisApp {
                 policy_order.push(group.name.clone());
                 policy_lookup.insert(
                     group.name.clone(),
-                    (strategy, exit_name, latency_ms, protocol),
+                    PolicyLookupEntry {
+                        strategy,
+                        exit_name,
+                        latency_ms,
+                        latency_measured_at,
+                        protocol,
+                    },
                 );
             }
         } else {
@@ -615,9 +632,11 @@ impl ManisApp {
                     .or_else(|| candidates.first().map(|node| node.name.clone()))
                     .unwrap_or_else(|| DIRECT_TARGET.to_owned());
                 let selected_node = candidates.iter().find(|node| node.name == selected_name);
-                let latency_ms = selected_node
+                let fallback_ms = selected_node
                     .and_then(|node| node.latency_ms)
                     .map(u64::from);
+                let (latency_ms, latency_measured_at) =
+                    self.resolved_policy_exit_latency(&selected_name, fallback_ms);
                 let protocol = selected_node
                     .map(|node| compact_protocol_label(&node.detail))
                     .unwrap_or_default();
@@ -625,7 +644,13 @@ impl ManisApp {
                 policy_order.push(group.name.clone());
                 policy_lookup.insert(
                     group.name.clone(),
-                    (strategy, selected_name, latency_ms, protocol),
+                    PolicyLookupEntry {
+                        strategy,
+                        exit_name: selected_name,
+                        latency_ms,
+                        latency_measured_at,
+                        protocol,
+                    },
                 );
             }
         }
@@ -772,22 +797,23 @@ impl ManisApp {
         let mut policy_slots = Vec::new();
         let mut seen_policies = BTreeSet::new();
         let mut exit_protocols: BTreeMap<String, String> = BTreeMap::new();
-        let mut exit_latencies: BTreeMap<String, Option<u64>> = BTreeMap::new();
+        let mut exit_latencies: BTreeMap<String, (Option<u64>, Option<u64>)> = BTreeMap::new();
 
         for name in &policy_order {
-            if let Some((strategy, exit_name, latency_ms, proto)) = policy_lookup.get(name) {
+            if let Some(entry) = policy_lookup.get(name) {
                 seen_policies.insert(name.clone());
                 exit_protocols
-                    .entry(exit_name.clone())
-                    .or_insert_with(|| proto.clone());
+                    .entry(entry.exit_name.clone())
+                    .or_insert_with(|| entry.protocol.clone());
                 exit_latencies
-                    .entry(exit_name.clone())
-                    .or_insert(*latency_ms);
+                    .entry(entry.exit_name.clone())
+                    .or_insert((entry.latency_ms, entry.latency_measured_at));
                 policy_slots.push(PolicySlot {
                     name: name.clone(),
-                    strategy: strategy.clone(),
-                    exit_name: exit_name.clone(),
-                    latency_ms: *latency_ms,
+                    strategy: entry.strategy.clone(),
+                    exit_name: entry.exit_name.clone(),
+                    latency_ms: entry.latency_ms,
+                    latency_measured_at: entry.latency_measured_at,
                     is_direct: false,
                     is_reject: false,
                 });
@@ -869,11 +895,17 @@ impl ManisApp {
                         global_exit,
                     )
                 };
+                let (latency_ms, latency_measured_at) = if is_direct || is_reject {
+                    (None, None)
+                } else {
+                    self.resolved_policy_exit_latency(&exit_name, None)
+                };
                 policy_slots.push(PolicySlot {
                     name: target_name,
                     strategy,
                     exit_name,
-                    latency_ms: None,
+                    latency_ms,
+                    latency_measured_at,
                     is_direct,
                     is_reject,
                 });
@@ -911,12 +943,18 @@ impl ManisApp {
                 } else {
                     exit_protocols.get(&exit_name).cloned().unwrap_or_default()
                 };
-                let latency_ms = exit_latencies.get(&exit_name).copied().flatten();
+                let (latency_ms, latency_measured_at) = if is_direct || is_reject {
+                    (None, None)
+                } else {
+                    let fallback = exit_latencies.get(&exit_name).and_then(|(ms, _)| *ms);
+                    self.resolved_policy_exit_latency(&exit_name, fallback)
+                };
                 ActiveExitSlot {
                     name: exit_name,
                     region,
                     protocol,
                     latency_ms,
+                    latency_measured_at,
                     serving_count,
                     is_direct,
                     is_reject,
@@ -2177,19 +2215,27 @@ impl ManisApp {
                             .text_color(theme.text_tertiary)
                             .child(exit_display),
                     )
-                    .child(
+                    .child(if slot.is_direct || slot.is_reject {
                         div()
                             .flex_shrink_0()
                             .font_family(MONO_FAMILY)
                             .text_size(px(11.0))
                             .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(if slot.is_direct {
-                                theme.text_tertiary
-                            } else {
-                                latency_color
-                            })
-                            .child(latency_label),
-                    ),
+                            .text_color(theme.text_tertiary)
+                            .child(latency_label)
+                            .into_any_element()
+                    } else {
+                        compact_latency_badge(
+                            format!("tree-rule-policy-latency-{index}"),
+                            slot.latency_ms,
+                            slot.latency_measured_at,
+                            latency_label,
+                            latency_color,
+                            px(11.0),
+                            language,
+                        )
+                        .into_any_element()
+                    }),
             )
             .child(port_dot(
                 PortSide::Right,
@@ -2261,19 +2307,20 @@ impl ManisApp {
         };
 
         let latency_color = theme.latency_color(exit.latency_ms);
-        let right_pill = if exit.is_direct || exit.is_reject {
-            status_badge(exit.protocol.clone(), StatusTone::Neutral, theme)
+        let right_pill: AnyElement = if exit.is_direct || exit.is_reject {
+            status_badge(exit.protocol.clone(), StatusTone::Neutral, theme).into_any_element()
         } else {
-            div()
-                .flex_shrink_0()
-                .font_family(MONO_FAMILY)
-                .text_size(px(11.0))
-                .font_weight(FontWeight::SEMIBOLD)
-                .text_color(latency_color)
-                .child(
-                    exit.latency_ms
-                        .map_or_else(|| "—".to_owned(), |ms| format!("{ms}ms")),
-                )
+            compact_latency_badge(
+                format!("tree-rule-exit-latency-{index}"),
+                exit.latency_ms,
+                exit.latency_measured_at,
+                exit.latency_ms
+                    .map_or_else(|| "—".to_owned(), |ms| format!("{ms}ms")),
+                latency_color,
+                px(11.0),
+                language,
+            )
+            .into_any_element()
         };
 
         div()

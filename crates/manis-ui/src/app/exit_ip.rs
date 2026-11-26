@@ -40,11 +40,20 @@ impl ManisApp {
         force_refresh: bool,
         cx: &mut Context<Self>,
     ) {
-        if self.exit_ip_probe_active {
-            return;
-        }
         let targets = self.exit_ip_targets_to_probe(targets, force_refresh);
         if targets.is_empty() {
+            return;
+        }
+        if self.exit_ip_probe_active {
+            for target in targets {
+                if !self
+                    .pending_exit_ip_targets
+                    .iter()
+                    .any(|queued| queued.name() == target.name())
+                {
+                    self.pending_exit_ip_targets.push(target);
+                }
+            }
             return;
         }
         self.exit_ip_probe_active = true;
@@ -96,10 +105,15 @@ impl ManisApp {
             self.exit_ips.insert(name, (ip, benchmark_timestamp()));
         }
         if changed {
+            self.persist_group_benchmarks();
             cx.notify();
         }
         if done.load(Ordering::Acquire) {
             self.exit_ip_probe_active = false;
+            if !self.pending_exit_ip_targets.is_empty() {
+                let queued = std::mem::take(&mut self.pending_exit_ip_targets);
+                self.start_exit_ip_probe(queued, false, cx);
+            }
             return;
         }
         cx.spawn(async move |this, cx| {

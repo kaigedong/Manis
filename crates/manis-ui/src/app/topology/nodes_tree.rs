@@ -23,7 +23,8 @@ use crate::{
         presentation::policy_kind_label,
     },
     components::{
-        RouteSegmentKind, StatusTone, card_surface, region_code_badge, route_segment, status_badge,
+        RouteSegmentKind, StatusTone, card_surface, compact_latency_badge, region_code_badge,
+        route_segment, status_badge,
     },
     localization::{CountNoun, Language},
     mihomo::ControllerState,
@@ -39,6 +40,7 @@ struct TreePolicyData {
     allows_manual_selection: bool,
     current_exit: Option<String>,
     current_latency_ms: Option<u64>,
+    current_latency_measured_at: Option<u64>,
     members: Vec<(ProxyId, String)>,
 }
 
@@ -47,6 +49,7 @@ struct TreeNodeData {
     region: String,
     protocol: String,
     latency_ms: Option<u64>,
+    latency_measured_at: Option<u64>,
     source_id: String,
     source_index: usize,
     identity: Option<NodeIdentity>,
@@ -534,6 +537,13 @@ impl ManisApp {
                 let managed_id = self
                     .editable_policy_group_id(&group.name)
                     .map(str::to_owned);
+                let (current_latency_ms, current_latency_measured_at) =
+                    selected.map_or((None, None), |node| {
+                        self.resolved_policy_exit_latency(
+                            &node.name,
+                            node.latency_ms.map(u64::from),
+                        )
+                    });
                 policies.push(TreePolicyData {
                     id: managed_id
                         .clone()
@@ -544,7 +554,8 @@ impl ManisApp {
                     strategy: policy_kind_label(language, group.kind).to_owned(),
                     allows_manual_selection: group.kind.allows_manual_selection(),
                     current_exit: selected.map(|node| node.name.clone()),
-                    current_latency_ms: selected.and_then(|node| node.latency_ms).map(u64::from),
+                    current_latency_ms,
+                    current_latency_measured_at,
                     members: group
                         .nodes
                         .iter()
@@ -561,13 +572,17 @@ impl ManisApp {
                     .policy_target(&group.name)
                     .map(str::to_owned)
                     .or_else(|| candidates.first().map(|node| node.name.clone()));
-                let current_latency_ms = selected_name.as_deref().and_then(|name| {
+                let fallback_latency_ms = selected_name.as_deref().and_then(|name| {
                     candidates
                         .iter()
                         .find(|node| node.name == name)
                         .and_then(|node| node.latency_ms)
                         .map(u64::from)
                 });
+                let (current_latency_ms, current_latency_measured_at) =
+                    selected_name.as_deref().map_or((None, None), |name| {
+                        self.resolved_policy_exit_latency(name, fallback_latency_ms)
+                    });
                 policies.push(TreePolicyData {
                     id: group.id.clone(),
                     managed_id: Some(group.id.clone()),
@@ -577,6 +592,7 @@ impl ManisApp {
                     allows_manual_selection: group.strategy == ManagedPolicyStrategy::Manual,
                     current_exit: selected_name,
                     current_latency_ms,
+                    current_latency_measured_at,
                     members: candidates
                         .into_iter()
                         .map(|node| (node.id, node.name))
@@ -609,11 +625,15 @@ impl ManisApp {
                         continue;
                     }
                     count_in_source += 1;
-                    let latency_ms = node.latency_label.as_deref().and_then(parse_latency_ms);
+                    let (latency_ms, latency_measured_at) = self.resolved_node_latency(
+                        &node.name,
+                        node.latency_label.as_deref().and_then(parse_latency_ms),
+                    );
                     nodes.push(TreeNodeData {
                         region: region_code(&node.name),
                         protocol: compact_protocol_label(&node.protocol),
                         latency_ms,
+                        latency_measured_at,
                         source_id: source.id.clone(),
                         source_index,
                         identity: NodeIdentity::new(&runtime_provider, &node.name).ok(),
@@ -627,10 +647,13 @@ impl ManisApp {
                     continue;
                 }
                 count_in_source += 1;
+                let (latency_ms, latency_measured_at) =
+                    self.resolved_node_latency(&saved.name, None);
                 nodes.push(TreeNodeData {
                     region: region_code(&saved.name),
                     protocol: compact_protocol_label(saved.protocol),
-                    latency_ms: None,
+                    latency_ms,
+                    latency_measured_at,
                     source_id: source.id.clone(),
                     source_index,
                     identity: NodeIdentity::new(&source.id, &saved.name).ok(),
@@ -677,6 +700,8 @@ impl ManisApp {
                         .get(member_name.as_str())
                         .copied()
                         .unwrap_or(("", None));
+                    let (latency_ms, latency_measured_at) =
+                        self.resolved_node_latency(member_name, ms);
                     let managed_identity = if matches!(member_name.as_str(), "DIRECT" | "REJECT") {
                         NodeIdentity::new("builtin", member_name).ok()
                     } else {
@@ -685,7 +710,8 @@ impl ManisApp {
                     nodes.push(TreeNodeData {
                         region: region_code(member_name),
                         protocol: compact_protocol_label(proto),
-                        latency_ms: ms,
+                        latency_ms,
+                        latency_measured_at,
                         source_id: "runtime".to_owned(),
                         source_index: source_chips.len(),
                         identity: NodeIdentity::new("runtime", member_name).ok(),
@@ -1351,15 +1377,15 @@ impl ManisApp {
                                     .child(exit_display),
                             ),
                     )
-                    .child(
-                        div()
-                            .flex_shrink_0()
-                            .font_family(MONO_FAMILY)
-                            .text_size(px(11.0))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(latency_color)
-                            .child(latency_label),
-                    ),
+                    .child(compact_latency_badge(
+                        format!("tree-policy-latency-{index}"),
+                        policy.current_latency_ms,
+                        policy.current_latency_measured_at,
+                        latency_label,
+                        latency_color,
+                        px(11.0),
+                        language,
+                    )),
             )
             // Right anchor port connecting to child policies or physical nodes
             .when(show_right_port, |el| {
@@ -1749,15 +1775,15 @@ impl ManisApp {
                                     .child(node.protocol.clone()),
                             ),
                     )
-                    .child(
-                        div()
-                            .flex_shrink_0()
-                            .font_family(MONO_FAMILY)
-                            .text_size(px(11.0))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(latency_color)
-                            .child(latency_label),
-                    ),
+                    .child(compact_latency_badge(
+                        format!("tree-node-latency-{index}"),
+                        node.latency_ms,
+                        node.latency_measured_at,
+                        latency_label,
+                        latency_color,
+                        px(11.0),
+                        language,
+                    )),
             )
             // Left-edge hover `+` / `-` button or animated two-step confirm pill
             .when_some(member_control, ParentElement::child);

@@ -229,6 +229,49 @@ pub(crate) fn benchmark_age(language: Language, elapsed_secs: u64) -> String {
     }
 }
 
+pub(crate) fn latency_age(language: Language, elapsed_secs: u64) -> String {
+    if elapsed_secs < 60 {
+        return match language {
+            Language::English => format!("{elapsed_secs}s ago"),
+            Language::SimplifiedChinese => format!("{elapsed_secs} 秒前"),
+        };
+    }
+    let minutes = elapsed_secs / 60;
+    match language {
+        Language::English => format!("{minutes} min ago"),
+        Language::SimplifiedChinese => format!("{minutes} 分钟前"),
+    }
+}
+
+pub(crate) fn latency_tooltip(
+    language: Language,
+    milliseconds: Option<u64>,
+    measured_at_epoch_secs: Option<u64>,
+    now_epoch_secs: u64,
+) -> String {
+    let age = measured_at_epoch_secs
+        .filter(|ts| *ts > 0)
+        .map(|ts| latency_age(language, now_epoch_secs.saturating_sub(ts)));
+    match (milliseconds, age) {
+        (Some(ms), Some(age)) => match language {
+            Language::English => format!("Latency {ms} ms · tested {age}"),
+            Language::SimplifiedChinese => format!("延迟 {ms} ms · {age}测速"),
+        },
+        (Some(ms), None) => match language {
+            Language::English => format!("Latency {ms} ms · test time unknown"),
+            Language::SimplifiedChinese => format!("延迟 {ms} ms · 测速时间未知"),
+        },
+        (None, Some(age)) => match language {
+            Language::English => format!("Latency test failed · tested {age}"),
+            Language::SimplifiedChinese => format!("测速失败 · {age}测速"),
+        },
+        (None, None) => match language {
+            Language::English => "Not tested yet".to_owned(),
+            Language::SimplifiedChinese => "尚未测速".to_owned(),
+        },
+    }
+}
+
 pub(crate) fn mihomo_installed(language: Language, version: &str) -> String {
     match language {
         Language::English => format!("Mihomo {version} installed and verified"),

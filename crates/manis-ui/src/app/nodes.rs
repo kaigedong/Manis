@@ -220,9 +220,10 @@ mod policy_editor;
 mod region;
 mod source_groups;
 mod view;
+pub(crate) use benchmark_state::benchmark_timestamp;
 pub(in crate::app) use benchmark_state::{
     GroupBenchmarkNodeState, GroupBenchmarkProgressQueue, GroupBenchmarkState,
-    GroupBenchmarkSummary, PolicyBenchmarkRun, benchmark_timestamp,
+    GroupBenchmarkSummary, NodeLatencyRecord, PolicyBenchmarkRun,
 };
 pub(in crate::app) use policy_editor::{
     ManagedPolicyRuntimeState, ManagedPolicyState, PolicyEditorPopover,

@@ -10,7 +10,10 @@ use gpui_component::{
     switch::Switch,
 };
 
-use crate::theme::{ControlSize, MONO_FAMILY, Radius, Space, TextRole, Theme};
+use crate::{
+    localization::{Language, copy},
+    theme::{ControlSize, MONO_FAMILY, Radius, Space, TextRole, Theme},
+};
 
 /// The one opaque content card treatment: elevated fill, 1px warm hairline, card radius.
 pub(crate) fn card_surface(theme: Theme) -> Div {
@@ -293,6 +296,57 @@ pub(crate) fn latency_pill(milliseconds: Option<u64>, theme: Theme) -> Div {
                 .font_weight(TextRole::Data.weight())
                 .child(label),
         )
+}
+
+/// A measured latency with an interactive hover tooltip describing when the measurement was taken.
+pub(crate) fn latency_pill_with_tooltip(
+    id: impl Into<ElementId>,
+    milliseconds: Option<u64>,
+    measured_at_epoch_secs: Option<u64>,
+    language: Language,
+    theme: Theme,
+) -> Stateful<Div> {
+    latency_pill(milliseconds, theme)
+        .id(id)
+        .tooltip(move |window, cx| {
+            let text = copy::app::latency_tooltip(
+                language,
+                milliseconds,
+                measured_at_epoch_secs,
+                crate::app::benchmark_timestamp(),
+            );
+            gpui_component::tooltip::Tooltip::new(text).build(window, cx)
+        })
+}
+
+/// Compact mono latency text (used inside policy chips and topology cards) with the same hover
+/// tooltip showing when the latency was measured.
+pub(crate) fn compact_latency_badge(
+    id: impl Into<ElementId>,
+    milliseconds: Option<u64>,
+    measured_at_epoch_secs: Option<u64>,
+    label: impl Into<SharedString>,
+    color: Rgba,
+    text_size: gpui::Pixels,
+    language: Language,
+) -> Stateful<Div> {
+    div()
+        .id(id)
+        .flex_shrink_0()
+        .font_family(MONO_FAMILY)
+        .text_size(text_size)
+        .font_weight(FontWeight::SEMIBOLD)
+        .text_color(color)
+        .child(label.into())
+        .tooltip(move |window, cx| {
+            let text = copy::app::latency_tooltip(
+                language,
+                milliseconds,
+                measured_at_epoch_secs,
+                crate::app::benchmark_timestamp(),
+            );
+            gpui_component::tooltip::Tooltip::new(text).build(window, cx)
+        })
 }
 
 /// A subscription quota meter. The fill is the primary accent; the track is a recessed well.

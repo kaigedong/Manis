@@ -48,6 +48,10 @@ impl ManisApp {
         let view = self.policy_list_card_view(item);
         let benchmark = self.managed_policies.benchmarks.get(&view.benchmark_key);
         let selected_node = self.selected_node_for_policy(view.item);
+        let (current_latency, current_latency_measured_at) = selected_node
+            .map_or((None, None), |node| {
+                self.resolved_policy_exit_latency(&node.name, node.latency_ms.map(u64::from))
+            });
         let members =
             self.policy_list_members(&view, selected_node, benchmark, language, theme, cx);
         let feedback = benchmark
@@ -66,9 +70,8 @@ impl ManisApp {
                     || language.localized(copy::app::NO_AVAILABLE_NODES).to_owned(),
                     |node| Self::policy_candidate_display_name(&node.name).to_owned(),
                 ),
-                current_latency: selected_node
-                    .and_then(|node| node.latency_ms)
-                    .map(u64::from),
+                current_latency,
+                current_latency_measured_at,
                 has_exit: selected_node.is_some(),
                 expanded: view.expanded,
                 identity_action: Some(Self::policy_list_test_action(&view, language, theme, cx)),
@@ -137,6 +140,8 @@ impl ManisApp {
             .nodes
             .iter()
             .map(|node| {
+                let (latency_override, latency_measured_at) =
+                    self.resolved_policy_exit_latency(&node.name, node.latency_ms.map(u64::from));
                 Self::node_row(
                     node,
                     PolicyNodeRowContext {
@@ -153,6 +158,8 @@ impl ManisApp {
                         benchmark_state: benchmark.map_or(GroupBenchmarkNodeState::Idle, |state| {
                             state.node_state(&node.name)
                         }),
+                        latency_override,
+                        latency_measured_at,
                         exit_ip: self.exit_ip_label(&node.name).map(str::to_owned),
                         language,
                         theme,
@@ -277,13 +284,15 @@ impl ManisApp {
             manually_selectable,
             selection_busy,
             benchmark_state,
+            latency_override,
+            latency_measured_at,
             exit_ip,
             language,
             theme,
         } = context;
         let latency = match benchmark_state {
             GroupBenchmarkNodeState::Measured(milliseconds) => Some(u64::from(milliseconds)),
-            _ => item.latency_ms.map(u64::from),
+            _ => latency_override.or_else(|| item.latency_ms.map(u64::from)),
         };
         let selectable = manually_selectable && !selection_busy;
         let tooltip = exit_ip.map_or(source.clone(), |ip| format!("{source} · IP {ip}"));
@@ -297,6 +306,7 @@ impl ManisApp {
                 id: chip_id,
                 name: Self::policy_candidate_display_name(&item.name),
                 latency,
+                latency_measured_at,
                 selected: current,
                 selectable,
                 language,

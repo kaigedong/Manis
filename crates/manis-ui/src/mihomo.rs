@@ -408,6 +408,7 @@ pub(crate) struct RuntimeSnapshot {
 pub(crate) struct LoadedSnapshot {
     pub catalog: Option<PolicyCatalog>,
     pub providers: Vec<LoadedProvider>,
+    pub node_latency_records: BTreeMap<String, (Option<u16>, u64)>,
     pub version: String,
     pub active_connections: usize,
     pub download_total: u64,

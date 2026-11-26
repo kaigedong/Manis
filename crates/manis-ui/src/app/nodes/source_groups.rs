@@ -8,7 +8,7 @@ use super::{
     region_code, style_action_button,
 };
 use crate::components::{
-    StatusTone, card_surface, latency_pill, mono_text, region_code_badge, status_badge,
+    StatusTone, card_surface, latency_pill_with_tooltip, mono_text, region_code_badge, status_badge,
 };
 use crate::theme::MONO_FAMILY;
 use gpui_component::IconName;
@@ -364,6 +364,36 @@ impl ManisApp {
         table
     }
 
+    fn resolved_source_node_latency(
+        &self,
+        node: &LoadedProviderNode,
+        benchmark: &GroupBenchmarkState,
+    ) -> (GroupBenchmarkNodeState, Option<u64>) {
+        let (shared_ms, shared_measured_at) = self.resolved_node_latency(
+            &node.name,
+            node.latency_label.as_deref().and_then(parse_latency_ms),
+        );
+        let latency = if benchmark.is_running() {
+            benchmark.node_state(&node.name)
+        } else if let Some(ms) = shared_ms.and_then(|ms| u16::try_from(ms).ok()) {
+            GroupBenchmarkNodeState::Measured(ms)
+        } else {
+            benchmark.node_state(&node.name)
+        };
+        let fallback_ts = match benchmark {
+            GroupBenchmarkState::Complete {
+                finished_at_epoch_secs,
+                ..
+            }
+            | GroupBenchmarkState::Failed {
+                finished_at_epoch_secs,
+                ..
+            } if *finished_at_epoch_secs > 0 => Some(*finished_at_epoch_secs),
+            _ => None,
+        };
+        (latency, shared_measured_at.or(fallback_ts))
+    }
+
     pub(super) fn workspace_node_row(
         &self,
         node: &LoadedProviderNode,
@@ -381,8 +411,8 @@ impl ManisApp {
             language,
             theme,
         } = view;
-        let latency = benchmark.node_state(&node.name);
-        let idle_latency = node.latency_label.clone().unwrap_or_else(|| "—".to_owned());
+        let (latency, latency_measured_at) = self.resolved_source_node_latency(node, benchmark);
+        let idle_latency = node.latency_label.as_deref().unwrap_or("—");
         let exit_ip = self.exit_ip_label(&node.name).map(str::to_owned);
         let spinner_id = format!("{row_id}-latency");
         let global_identity = NodeIdentity::new(&source_id, &node.name).ok();
@@ -396,6 +426,7 @@ impl ManisApp {
         let row_body = Self::node_row_columns(
             node,
             latency,
+            latency_measured_at,
             idle_latency,
             exit_ip,
             &spinner_id,
@@ -453,13 +484,72 @@ impl ManisApp {
             })
     }
 
+    fn node_latency_cell(
+        latency: GroupBenchmarkNodeState,
+        latency_measured_at: Option<u64>,
+        idle_latency: &str,
+        spinner_id: &str,
+        language: Language,
+        theme: Theme,
+        compact: bool,
+    ) -> Div {
+        let latency_ms = match latency {
+            GroupBenchmarkNodeState::Measured(milliseconds) => Some(u64::from(milliseconds)),
+            _ => parse_latency_ms(idle_latency),
+        };
+        let cell = div()
+            .w(px(if compact { 76.0 } else { 86.0 }))
+            .flex_shrink_0()
+            .flex()
+            .items_center()
+            .justify_end();
+        match latency {
+            GroupBenchmarkNodeState::Pending => cell.child(Self::benchmark_latency_content(
+                latency,
+                idle_latency.to_owned(),
+                spinner_id,
+                language,
+                theme,
+            )),
+            GroupBenchmarkNodeState::Failed => cell.child(
+                Self::benchmark_latency_content(
+                    latency,
+                    idle_latency.to_owned(),
+                    spinner_id,
+                    language,
+                    theme,
+                )
+                .id(format!("{spinner_id}-failed"))
+                .tooltip(move |window, cx| {
+                    let text = copy::app::latency_tooltip(
+                        language,
+                        None,
+                        latency_measured_at,
+                        crate::app::benchmark_timestamp(),
+                    );
+                    gpui_component::tooltip::Tooltip::new(text).build(window, cx)
+                }),
+            ),
+            GroupBenchmarkNodeState::Idle | GroupBenchmarkNodeState::Measured(_) => {
+                cell.child(latency_pill_with_tooltip(
+                    format!("{spinner_id}-pill"),
+                    latency_ms,
+                    latency_measured_at,
+                    language,
+                    theme,
+                ))
+            }
+        }
+    }
+
     /// The four-column node row: `[region] name` | protocol | exit IP | signal bars and latency.
     /// A compact window drops the IP column so the name keeps its width.
     #[allow(clippy::too_many_arguments)]
     pub(in crate::app) fn node_row_columns(
         node: &LoadedProviderNode,
         latency: GroupBenchmarkNodeState,
-        idle_latency: String,
+        latency_measured_at: Option<u64>,
+        idle_latency: &str,
         exit_ip: Option<String>,
         spinner_id: &str,
         selected: bool,
@@ -467,10 +557,6 @@ impl ManisApp {
         theme: Theme,
         compact: bool,
     ) -> Div {
-        let latency_ms = match latency {
-            GroupBenchmarkNodeState::Measured(milliseconds) => Some(u64::from(milliseconds)),
-            _ => parse_latency_ms(&idle_latency),
-        };
         div()
             .min_w(px(0.0))
             .flex_1()
@@ -536,36 +622,15 @@ impl ManisApp {
                         .child(Self::exit_ip_content(exit_ip, theme)),
                 )
             })
-            .child(
-                div()
-                    .w(px(if compact { 76.0 } else { 86.0 }))
-                    .flex_shrink_0()
-                    .flex()
-                    .items_center()
-                    .justify_end()
-                    .when(
-                        matches!(
-                            latency,
-                            GroupBenchmarkNodeState::Pending | GroupBenchmarkNodeState::Failed
-                        ),
-                        |cell| {
-                            cell.child(Self::benchmark_latency_content(
-                                latency,
-                                idle_latency,
-                                spinner_id,
-                                language,
-                                theme,
-                            ))
-                        },
-                    )
-                    .when(
-                        !matches!(
-                            latency,
-                            GroupBenchmarkNodeState::Pending | GroupBenchmarkNodeState::Failed
-                        ),
-                        |cell| cell.child(latency_pill(latency_ms, theme)),
-                    ),
-            )
+            .child(Self::node_latency_cell(
+                latency,
+                latency_measured_at,
+                idle_latency,
+                spinner_id,
+                language,
+                theme,
+                compact,
+            ))
     }
 
     /// The protocol pill label: a node with no reported protocol still names its state.

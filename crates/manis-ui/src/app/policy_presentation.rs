@@ -1,7 +1,7 @@
 use super::{
-    GroupBenchmarkNodeState, GroupBenchmarkProgressQueue, GroupBenchmarkState,
-    GroupBenchmarkSummary, ManisApp, benchmark_timestamp, managed_subscription_provider_index,
-    stored_workspace,
+    ControllerState, GroupBenchmarkNodeState, GroupBenchmarkProgressQueue, GroupBenchmarkState,
+    GroupBenchmarkSummary, ManisApp, NodeLatencyRecord, benchmark_timestamp,
+    managed_subscription_provider_index, stored_workspace,
 };
 use crate::{
     components::{ActionRole, style_action_button},
@@ -259,13 +259,15 @@ impl ManisApp {
         theme: Theme,
         listener: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
     ) -> Button {
+        let label = language.localized(if running {
+            copy::nodes::GROUP_BENCHMARK_IN_PROGRESS
+        } else {
+            copy::nodes::TEST_GROUP_LATENCY
+        });
         style_action_button(
             Button::new(format!("group-benchmark-{id}"))
-                .accessibility_label(language.localized(if running {
-                    copy::nodes::GROUP_BENCHMARK_IN_PROGRESS
-                } else {
-                    copy::nodes::TEST_GROUP_LATENCY
-                }))
+                .accessibility_label(label)
+                .tooltip(label)
                 .loading(running),
             ActionRole::Secondary,
             ControlSize::Icon,
@@ -273,19 +275,9 @@ impl ManisApp {
         .when(running, gpui::Styled::cursor_default)
         .flex_shrink_0()
         .when(!running, |button| {
-            button.child(
-                div()
-                    .flex()
-                    .items_end()
-                    .gap(px(2.0))
-                    .children([5.0, 9.0, 13.0].map(|height| {
-                        div()
-                            .w(px(2.0))
-                            .h(px(height))
-                            .rounded_full()
-                            .bg(theme.text_secondary)
-                    })),
-            )
+            button
+                .icon(gpui_component_assets::IconName::Zap)
+                .text_color(theme.text_secondary)
         })
         .on_click(listener)
     }

@@ -71,6 +71,10 @@ impl ManisApp {
             .selected_name
             .as_deref()
             .and_then(|name| view.candidates.iter().find(|node| node.name == name));
+        let (current_latency, current_latency_measured_at) = selected
+            .map_or((None, None), |node| {
+                self.resolved_policy_exit_latency(&node.name, node.latency_ms.map(u64::from))
+            });
         let members = self.offline_policy_members(&view, benchmark, language, theme, cx);
         card::policy_card(
             PolicyCardContent {
@@ -83,7 +87,8 @@ impl ManisApp {
                     || language.localized(copy::app::NO_AVAILABLE_NODES).to_owned(),
                     |node| Self::policy_candidate_display_name(&node.name).to_owned(),
                 ),
-                current_latency: selected.and_then(|node| node.latency_ms).map(u64::from),
+                current_latency,
+                current_latency_measured_at,
                 has_exit: selected.is_some(),
                 expanded: view.expanded,
                 identity_action: Some(Self::offline_policy_test_action(&view, language, theme, cx)),
@@ -164,6 +169,10 @@ impl ManisApp {
         view.candidates
             .iter()
             .map(|candidate| {
+                let (latency_override, latency_measured_at) = self.resolved_policy_exit_latency(
+                    &candidate.name,
+                    candidate.latency_ms.map(u64::from),
+                );
                 Self::node_row(
                     candidate,
                     PolicyNodeRowContext {
@@ -180,6 +189,8 @@ impl ManisApp {
                         benchmark_state: benchmark.map_or(GroupBenchmarkNodeState::Idle, |state| {
                             state.node_state(&candidate.name)
                         }),
+                        latency_override,
+                        latency_measured_at,
                         exit_ip: self.exit_ip_label(&candidate.name).map(str::to_owned),
                         language,
                         theme,

@@ -7,10 +7,10 @@ use ureq::{Agent, Proxy};
 
 use super::{ProxyDelayTarget, put_policy_group_selection};
 
-const EXIT_IP_URL: &str = "https://api.ipify.org";
-const EXIT_IP_TIMEOUT: Duration = Duration::from_secs(5);
+const EXIT_IP_URLS: [&str; 2] = ["https://api.ipify.org", "https://ipv4.icanhazip.com"];
+const EXIT_IP_TIMEOUT: Duration = Duration::from_secs(4);
 const MAX_EXIT_IP_RESPONSE_BYTES: u64 = 64;
-const MAX_PROBES_PER_RUN: usize = 32;
+const MAX_PROBES_PER_RUN: usize = 128;
 
 // The selector is shared by every lookup. Hold the lock across both selection and the HTTP
 // request so another benchmark cannot switch the selector while a request is in flight.
@@ -52,15 +52,24 @@ pub(super) fn probe_targets(
 }
 
 fn lookup_ipv4(agent: &Agent) -> Option<Ipv4Addr> {
-    let mut response = agent.get(EXIT_IP_URL).call().ok()?;
-    let body = response
-        .body_mut()
-        .with_config()
-        .limit(MAX_EXIT_IP_RESPONSE_BYTES)
-        .lossy_utf8(false)
-        .read_to_string()
-        .ok()?;
-    parse_public_ipv4(&body)
+    for url in EXIT_IP_URLS {
+        let Ok(mut response) = agent.get(url).call() else {
+            continue;
+        };
+        let Ok(body) = response
+            .body_mut()
+            .with_config()
+            .limit(MAX_EXIT_IP_RESPONSE_BYTES)
+            .lossy_utf8(false)
+            .read_to_string()
+        else {
+            continue;
+        };
+        if let Some(ip) = parse_public_ipv4(&body) {
+            return Some(ip);
+        }
+    }
+    None
 }
 
 fn parse_public_ipv4(body: &str) -> Option<Ipv4Addr> {

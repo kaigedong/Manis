@@ -10,17 +10,29 @@ use crate::diagnostics::{LogLevel, record_event};
 
 use super::{
     GeneratedProfileApply, GroupBenchmarkState, ImportedSubscription, KernelRuntime, Language,
-    ManisApp, StoredQxRuleSource, StoredSingleNode, SubscriptionStoreError, copy, mihomo,
+    ManisApp, NodeLatencyRecord, StoredQxRuleSource, StoredSingleNode, SubscriptionStoreError,
+    benchmark_timestamp, copy, mihomo,
 };
 
 const BENCHMARK_STATE_FILE: &str = "benchmarks.state";
 const BENCHMARK_STATE_VERSION: u8 = 1;
 const MAX_BENCHMARK_STATE_BYTES: u64 = 4 * 1024 * 1024;
+const PERSISTED_EXIT_IP_CACHE_SECS: u64 = 30 * 60;
 
 #[derive(Deserialize, Serialize)]
 struct StoredBenchmarks {
     version: u8,
     benchmarks: BTreeMap<String, GroupBenchmarkState>,
+    #[serde(default)]
+    node_latencies: BTreeMap<String, NodeLatencyRecord>,
+    #[serde(default)]
+    exit_ips: BTreeMap<String, (String, u64)>,
+}
+
+pub(super) struct RestoredBenchmarkCache {
+    pub(super) benchmarks: BTreeMap<String, GroupBenchmarkState>,
+    pub(super) node_latencies: BTreeMap<String, NodeLatencyRecord>,
+    pub(super) exit_ips: BTreeMap<String, (Option<String>, u64)>,
 }
 
 pub(super) struct StoredWorkspace {
@@ -33,6 +45,8 @@ pub(super) struct StoredWorkspace {
     pub(super) managed_policy_groups: Vec<ManagedPolicyGroup>,
     pub(super) node_selection_preferences: mihomo::NodeSelectionPreferences,
     pub(super) benchmarks: BTreeMap<String, GroupBenchmarkState>,
+    pub(super) node_latencies: BTreeMap<String, NodeLatencyRecord>,
+    pub(super) exit_ips: BTreeMap<String, (Option<String>, u64)>,
     pub(super) routing_mode: RoutingMode,
     pub(super) error: Option<SubscriptionStoreError>,
 }
@@ -51,14 +65,19 @@ impl StoredWorkspace {
         let policy_groups = mihomo::load_managed_policy_groups_in(directory);
         let node_selection_preferences = mihomo::load_node_selection_preferences_in(directory);
         let benchmark_dir = benchmark_store_dir(directory);
-        let benchmarks = load_group_benchmarks_in(&benchmark_dir);
-        if let Err(error) = &benchmarks {
+        let benchmark_cache = load_benchmark_cache_in(&benchmark_dir);
+        if let Err(error) = &benchmark_cache {
             record_event(
                 LogLevel::Warn,
                 "group_benchmark.restore_failed",
                 error.to_string(),
             );
         }
+        let restored_cache = benchmark_cache.unwrap_or_else(|_| RestoredBenchmarkCache {
+            benchmarks: BTreeMap::new(),
+            node_latencies: BTreeMap::new(),
+            exit_ips: BTreeMap::new(),
+        });
         let routing_mode = mihomo::load_routing_mode_in(directory);
         let error = [
             subscriptions.is_err(),
@@ -87,7 +106,9 @@ impl StoredWorkspace {
             collapsed_groups: collapsed.unwrap_or_default(),
             managed_policy_groups: policy_groups.unwrap_or_default(),
             node_selection_preferences: node_selection_preferences.unwrap_or_default(),
-            benchmarks: benchmarks.unwrap_or_default(),
+            benchmarks: restored_cache.benchmarks,
+            node_latencies: restored_cache.node_latencies,
+            exit_ips: restored_cache.exit_ips,
             routing_mode: routing_mode.unwrap_or_default(),
             error,
         }
@@ -104,6 +125,8 @@ impl StoredWorkspace {
             managed_policy_groups: Vec::new(),
             node_selection_preferences: mihomo::NodeSelectionPreferences::default(),
             benchmarks: BTreeMap::new(),
+            node_latencies: BTreeMap::new(),
+            exit_ips: BTreeMap::new(),
             routing_mode: RoutingMode::Rule,
             error: None,
         }
@@ -121,12 +144,16 @@ pub(super) fn benchmark_store_dir(configuration_directory: &Path) -> std::path::
     }
 }
 
-pub(super) fn load_group_benchmarks_in(
+pub(super) fn load_benchmark_cache_in(
     directory: &Path,
-) -> Result<BTreeMap<String, GroupBenchmarkState>, SubscriptionStoreError> {
+) -> Result<RestoredBenchmarkCache, SubscriptionStoreError> {
     let path = directory.join(BENCHMARK_STATE_FILE);
     if !path.exists() {
-        return Ok(BTreeMap::new());
+        return Ok(RestoredBenchmarkCache {
+            benchmarks: BTreeMap::new(),
+            node_latencies: BTreeMap::new(),
+            exit_ips: BTreeMap::new(),
+        });
     }
     let metadata =
         fs::metadata(&path).map_err(|_error| SubscriptionStoreError::StoreUnavailable)?;
@@ -143,19 +170,84 @@ pub(super) fn load_group_benchmarks_in(
     stored
         .benchmarks
         .retain(|_, state| state.complete_delays().is_some());
-    Ok(stored.benchmarks)
+    if stored.node_latencies.is_empty() {
+        for state in stored.benchmarks.values() {
+            let GroupBenchmarkState::Complete {
+                delays,
+                finished_at_epoch_secs,
+                ..
+            } = state
+            else {
+                continue;
+            };
+            for (name, delay) in delays {
+                if *delay == 0 {
+                    continue;
+                }
+                let candidate = NodeLatencyRecord::measured(Some(*delay), *finished_at_epoch_secs);
+                match stored.node_latencies.get(name).copied() {
+                    Some(existing)
+                        if existing.measured_at_epoch_secs > candidate.measured_at_epoch_secs => {}
+                    _ => {
+                        stored.node_latencies.insert(name.clone(), candidate);
+                    }
+                }
+            }
+        }
+    }
+    let now = benchmark_timestamp();
+    let exit_ips = stored
+        .exit_ips
+        .into_iter()
+        .filter(|(_, (_, checked_at))| {
+            *checked_at > 0 && now.saturating_sub(*checked_at) < PERSISTED_EXIT_IP_CACHE_SECS
+        })
+        .map(|(name, (ip, checked_at))| (name, (Some(ip), checked_at)))
+        .collect();
+    Ok(RestoredBenchmarkCache {
+        benchmarks: stored.benchmarks,
+        node_latencies: stored.node_latencies,
+        exit_ips,
+    })
 }
 
+#[cfg(test)]
+pub(super) fn load_group_benchmarks_in(
+    directory: &Path,
+) -> Result<BTreeMap<String, GroupBenchmarkState>, SubscriptionStoreError> {
+    load_benchmark_cache_in(directory).map(|cache| cache.benchmarks)
+}
+
+#[cfg(test)]
 pub(super) fn save_group_benchmarks_in(
     directory: &Path,
     benchmarks: &BTreeMap<String, GroupBenchmarkState>,
 ) -> Result<(), SubscriptionStoreError> {
+    save_benchmark_cache_in(directory, benchmarks, &BTreeMap::new(), &BTreeMap::new())
+}
+
+pub(super) fn save_benchmark_cache_in(
+    directory: &Path,
+    benchmarks: &BTreeMap<String, GroupBenchmarkState>,
+    node_latencies: &BTreeMap<String, NodeLatencyRecord>,
+    exit_ips: &BTreeMap<String, (Option<String>, u64)>,
+) -> Result<(), SubscriptionStoreError> {
+    let now = benchmark_timestamp();
     let stored = StoredBenchmarks {
         version: BENCHMARK_STATE_VERSION,
         benchmarks: benchmarks
             .iter()
             .filter(|(_, state)| state.complete_delays().is_some())
             .map(|(key, state)| (key.clone(), state.clone()))
+            .collect(),
+        node_latencies: node_latencies.clone(),
+        exit_ips: exit_ips
+            .iter()
+            .filter_map(|(name, (ip, checked_at))| {
+                let ip = ip.as_ref()?;
+                (*checked_at > 0 && now.saturating_sub(*checked_at) < PERSISTED_EXIT_IP_CACHE_SECS)
+                    .then(|| (name.clone(), (ip.clone(), *checked_at)))
+            })
             .collect(),
     };
     let contents = serde_json::to_vec(&stored)

@@ -10,7 +10,37 @@ pub(in crate::app) struct PolicyBenchmarkRun {
     pub(in crate::app) group_id: PolicyGroupId,
     pub(in crate::app) group_kind: manis_core::PolicyGroupKind,
     pub(in crate::app) total: usize,
+    pub(in crate::app) tested_nodes: Vec<String>,
     pub(in crate::app) refresh_exit_ip: bool,
+}
+
+/// Shared latency observation for one physical proxy node across all policy groups and sources.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+pub(in crate::app) struct NodeLatencyRecord {
+    /// Last measured delay in milliseconds, or `None` when the latest test failed/timed out.
+    #[serde(default)]
+    pub(in crate::app) delay_ms: Option<u16>,
+    /// Unix epoch seconds when this measurement was recorded (`0` when unknown).
+    #[serde(default)]
+    pub(in crate::app) measured_at_epoch_secs: u64,
+}
+
+impl NodeLatencyRecord {
+    pub(in crate::app) fn measured(delay_ms: Option<u16>, measured_at_epoch_secs: u64) -> Self {
+        Self {
+            delay_ms: delay_ms.filter(|delay| *delay > 0),
+            measured_at_epoch_secs,
+        }
+    }
+
+    pub(in crate::app) fn is_fresh(&self, now_epoch_secs: u64, interval_secs: u32) -> bool {
+        self.measured_at_epoch_secs > 0
+            && now_epoch_secs.saturating_sub(self.measured_at_epoch_secs) < u64::from(interval_secs)
+    }
+
+    pub(in crate::app) fn measured_at(&self) -> Option<u64> {
+        (self.measured_at_epoch_secs > 0).then_some(self.measured_at_epoch_secs)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
@@ -203,7 +233,7 @@ impl GroupBenchmarkState {
     }
 }
 
-pub(in crate::app) fn benchmark_timestamp() -> u64 {
+pub(crate) fn benchmark_timestamp() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |duration| duration.as_secs())

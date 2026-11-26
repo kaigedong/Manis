@@ -55,10 +55,11 @@ use configuration::{
     ProxySourceEditorState, QxRuleEditorPopover, QxRuleImportFeedback, QxRuleImportResult,
     QxRuleSourceRefreshState, RuleRowScope, RuleSourceState,
 };
+pub(crate) use nodes::benchmark_timestamp;
 use nodes::{
     GroupBenchmarkNodeState, GroupBenchmarkProgressQueue, GroupBenchmarkState,
-    GroupBenchmarkSummary, ManagedPolicyRuntimeState, ManagedPolicyState, PolicyBenchmarkRun,
-    benchmark_timestamp,
+    GroupBenchmarkSummary, ManagedPolicyRuntimeState, ManagedPolicyState, NodeLatencyRecord,
+    PolicyBenchmarkRun,
 };
 use policy_workspace::PolicySelectionRequest;
 use presentation::{
@@ -197,6 +198,7 @@ pub struct ManisApp {
     kernel_logs: VecDeque<KernelLogEntry>,
     exit_ips: BTreeMap<String, (Option<String>, u64)>,
     exit_ip_probe_active: bool,
+    pending_exit_ip_targets: Vec<mihomo::ProxyDelayTarget>,
     dark: bool,
     status: String,
     launch_at_login: bool,
@@ -339,6 +341,8 @@ impl ManisApp {
             managed_policy_groups,
             node_selection_preferences,
             benchmarks,
+            node_latencies,
+            exit_ips,
             routing_mode,
             error: source_store_error,
         } = stored_workspace;
@@ -384,6 +388,7 @@ impl ManisApp {
                 managed_policy_groups,
                 node_selection_preferences,
                 benchmarks,
+                node_latencies,
             ),
             source_store_error,
             proxy_mode: ProxyMode::Off,
@@ -402,8 +407,9 @@ impl ManisApp {
             managed_health_tick: 0,
             live_status: LiveStreamStatus::default(),
             kernel_logs: VecDeque::with_capacity(500),
-            exit_ips: BTreeMap::new(),
+            exit_ips,
             exit_ip_probe_active: false,
+            pending_exit_ip_targets: Vec::new(),
             dark: false,
             status,
             launch_at_login,

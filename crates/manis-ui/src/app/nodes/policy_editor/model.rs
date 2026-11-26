@@ -1,6 +1,6 @@
 use super::{
     BTreeMap, BTreeSet, GroupBenchmarkState, ManagedPolicyGroup, ManagedPolicyIcon,
-    ManagedPolicyStrategy, NodeIdentity, mihomo,
+    ManagedPolicyStrategy, NodeIdentity, NodeLatencyRecord, mihomo,
 };
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -93,6 +93,8 @@ pub(in crate::app) struct ManagedPolicyState {
     pub(in crate::app) editor_popover: Option<PolicyEditorPopover>,
     pub(in crate::app) pending_benchmark_name: Option<String>,
     pub(in crate::app) benchmarks: BTreeMap<String, GroupBenchmarkState>,
+    /// Shared per-node latency observations propagated across all policy groups and sources.
+    pub(in crate::app) node_latencies: BTreeMap<String, NodeLatencyRecord>,
     pub(in crate::app) benchmark_generation: u64,
     pub(in crate::app) active_benchmark_generation: Option<u64>,
     pub(in crate::app) runtime_states: BTreeMap<String, ManagedPolicyRuntimeState>,
@@ -105,6 +107,7 @@ impl ManagedPolicyState {
         groups: Vec<ManagedPolicyGroup>,
         node_selections: mihomo::NodeSelectionPreferences,
         benchmarks: BTreeMap<String, GroupBenchmarkState>,
+        node_latencies: BTreeMap<String, NodeLatencyRecord>,
     ) -> Self {
         Self {
             groups,
@@ -113,6 +116,7 @@ impl ManagedPolicyState {
             editor_popover: None,
             pending_benchmark_name: None,
             benchmarks,
+            node_latencies,
             benchmark_generation: 0,
             active_benchmark_generation: None,
             runtime_states: BTreeMap::new(),

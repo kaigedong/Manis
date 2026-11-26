@@ -134,6 +134,7 @@ fn runtime_snapshot_populates_real_policy_groups() {
         mihomo::LoadedSnapshot {
             catalog: Some(catalog),
             providers: Vec::new(),
+            node_latency_records: std::collections::BTreeMap::new(),
             version: "fixture".to_owned(),
             active_connections: 0,
             download_total: 0,
@@ -177,6 +178,7 @@ fn late_provider_nodes_replace_compatible_and_empty_policy_groups() {
     let snapshot = |catalog| mihomo::LoadedSnapshot {
         catalog: Some(catalog),
         providers: Vec::new(),
+        node_latency_records: std::collections::BTreeMap::new(),
         version: "fixture".to_owned(),
         active_connections: 0,
         download_total: 0,
@@ -245,6 +247,7 @@ fn runtime_snapshot_keeps_completed_manual_policy_benchmark_latency() {
         mihomo::LoadedSnapshot {
             catalog: Some(catalog),
             providers: Vec::new(),
+            node_latency_records: std::collections::BTreeMap::new(),
             version: "fixture".to_owned(),
             active_connections: 0,
             download_total: 0,
@@ -276,6 +279,7 @@ fn runtime_snapshot_without_user_policy_groups_still_connects_cleanly() {
         mihomo::LoadedSnapshot {
             catalog: None,
             providers: Vec::new(),
+            node_latency_records: std::collections::BTreeMap::new(),
             version: "fixture".to_owned(),
             active_connections: 0,
             download_total: 0,

@@ -261,6 +261,30 @@ impl PolicyCatalog {
         true
     }
 
+    /// Applies shared node latency measurements to every policy group that references those nodes.
+    ///
+    /// A `Some(ms)` entry with `ms > 0` marks the node alive with that delay; `None` or `Some(0)`
+    /// clears its latency and marks it unavailable. Returns the number of node entries updated.
+    pub fn apply_node_latencies(&mut self, delays: &BTreeMap<String, Option<u16>>) -> usize {
+        let mut updated = 0;
+        for group in std::iter::once(&mut self.primary).chain(&mut self.remaining) {
+            for node in &mut group.nodes {
+                let Some(measured) = delays.get(&node.name).copied() else {
+                    continue;
+                };
+                if let Some(delay) = measured.filter(|delay| *delay > 0) {
+                    node.latency_ms = Some(delay);
+                    node.alive = Some(true);
+                } else {
+                    node.latency_ms = None;
+                    node.alive = Some(false);
+                }
+                updated += 1;
+            }
+        }
+        updated
+    }
+
     /// Records a selector group's validated target without rebuilding the catalog.
     ///
     /// `group_id_or_name` may match either the stable group ID or the display name. `target` may

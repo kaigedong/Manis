@@ -9,7 +9,8 @@ use super::super::{
     Space, Stateful, StatefulInteractiveElement, Styled, TextRole, Theme, Toggled, copy, div, px,
 };
 use crate::components::{
-    StatusTone, card_surface, latency_pill, mono_text, primary_button_interaction, status_badge,
+    StatusTone, card_surface, compact_latency_badge, latency_pill_with_tooltip,
+    primary_button_interaction, status_badge,
 };
 
 /// The parts of a policy card that differ between runtime and saved groups.
@@ -24,6 +25,7 @@ pub(super) struct PolicyCardContent<'a> {
     pub meta: String,
     pub current_exit: String,
     pub current_latency: Option<u64>,
+    pub current_latency_measured_at: Option<u64>,
     /// Whether the group actually resolves to a candidate exit.
     pub has_exit: bool,
     pub expanded: bool,
@@ -48,6 +50,7 @@ pub(super) struct PolicyMember<'a> {
     pub id: String,
     pub name: &'a str,
     pub latency: Option<u64>,
+    pub latency_measured_at: Option<u64>,
     pub selected: bool,
     pub selectable: bool,
     pub language: Language,
@@ -67,6 +70,7 @@ where
         meta,
         current_exit,
         current_latency,
+        current_latency_measured_at,
         has_exit,
         expanded,
         identity_action,
@@ -124,7 +128,15 @@ where
                     actions,
                     theme,
                 ))
-                .child(exit_row(current_exit, current_latency, has_exit, theme)),
+                .child(exit_row(
+                    format!("{card_id}-exit-latency"),
+                    current_exit,
+                    current_latency,
+                    current_latency_measured_at,
+                    has_exit,
+                    language,
+                    theme,
+                )),
         )
         .when(expanded, |card| {
             card.child(members_area(
@@ -204,9 +216,12 @@ fn card_identity(
 
 /// The recessed row that names the exit this group currently resolves to.
 fn exit_row(
+    latency_id: String,
     current_exit: String,
     current_latency: Option<u64>,
+    current_latency_measured_at: Option<u64>,
     has_exit: bool,
+    language: Language,
     theme: Theme,
 ) -> Div {
     div()
@@ -248,7 +263,13 @@ fn exit_row(
                         .child(current_exit),
                 ),
         )
-        .child(latency_pill(current_latency, theme))
+        .child(latency_pill_with_tooltip(
+            latency_id,
+            current_latency,
+            current_latency_measured_at,
+            language,
+            theme,
+        ))
 }
 
 /// The expanded member grid, separated from the exit row by a hairline.
@@ -311,12 +332,14 @@ where
         id,
         name,
         latency,
+        latency_measured_at,
         selected,
         selectable,
         language,
         theme,
     } = member;
     let selector = id.clone();
+    let latency_id = format!("{id}-latency");
     div()
         .id(id)
         .debug_selector(move || selector.clone())
@@ -360,9 +383,14 @@ where
                 })
                 .child(name.to_owned()),
         )
-        .child(mono_text(
+        .child(compact_latency_badge(
+            latency_id,
+            latency,
+            latency_measured_at,
             latency.map_or_else(|| "—".to_owned(), |value| format!("{value} ms")),
             theme.latency_color(latency),
+            TextRole::Data.size(),
+            language,
         ))
         .when(selectable, |chip| {
             chip.role(Role::RadioButton)

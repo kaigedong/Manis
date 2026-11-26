@@ -354,6 +354,7 @@ impl ManisApp {
         snapshot: LoadedSnapshot,
     ) {
         trace_ui(UiEvent::MihomoConnectSucceeded);
+        self.ingest_snapshot_node_latencies(&snapshot);
         let mut catalog = snapshot.catalog;
         for (group, target) in self.managed_policies.node_selections.iter_policy_targets() {
             if let Some(catalog) = catalog.as_mut() {
@@ -363,6 +364,8 @@ impl ManisApp {
         if let Some(catalog) = catalog.as_mut() {
             self.apply_completed_policy_benchmarks(catalog);
         }
+        let mut providers = snapshot.providers;
+        self.apply_shared_latencies_to_providers(&mut providers);
         let selection = catalog.as_ref().map(|catalog| {
             let primary = catalog.select(None);
             let selected_node = primary
@@ -381,7 +384,7 @@ impl ManisApp {
         } else {
             self.workspace.clear_source_selection();
         }
-        self.source_providers = snapshot.providers;
+        self.source_providers = providers;
         self.observed_routes = snapshot.observed_routes;
         self.active_connections = snapshot.connections;
         let system_proxy_applied = match self.system_proxy.lock() {
@@ -436,8 +439,11 @@ impl ManisApp {
     }
 
     pub(in crate::app) fn apply_refreshed_policy_snapshot(&mut self, snapshot: LoadedSnapshot) {
+        self.ingest_snapshot_node_latencies(&snapshot);
+        let mut providers = snapshot.providers;
+        self.apply_shared_latencies_to_providers(&mut providers);
         let Some(mut catalog) = snapshot.catalog else {
-            self.source_providers = snapshot.providers;
+            self.source_providers = providers;
             return;
         };
         self.apply_completed_policy_benchmarks(&mut catalog);
@@ -450,7 +456,7 @@ impl ManisApp {
             .map(|node| node.id.clone());
         let selected_group_id = selected_group.id.clone();
         self.catalog = Some(catalog);
-        self.source_providers = snapshot.providers;
+        self.source_providers = providers;
         self.workspace
             .replace_source_selection(selected_group_id, selected_node);
     }

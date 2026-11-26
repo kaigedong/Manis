@@ -125,12 +125,26 @@ pub struct Proxy {
 
 impl Proxy {
     #[must_use]
-    pub fn latest_latency_ms(&self) -> Option<f64> {
+    pub fn latest_latency_entry(&self) -> Option<(f64, Option<&str>)> {
         self.history.iter().rev().find_map(|history| {
-            history
+            let delay = history
                 .delay
-                .filter(|delay| delay.is_finite() && *delay > 0.0)
+                .filter(|delay| delay.is_finite() && *delay > 0.0)?;
+            Some((delay, history.time.as_deref()))
         })
+    }
+
+    #[must_use]
+    pub fn latest_latency_ms(&self) -> Option<f64> {
+        self.latest_latency_entry().map(|(delay, _)| delay)
+    }
+
+    #[must_use]
+    pub fn latest_history_time(&self) -> Option<&str> {
+        self.history
+            .iter()
+            .rev()
+            .find_map(|history| history.time.as_deref())
     }
 }
 

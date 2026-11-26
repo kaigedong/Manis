@@ -22,6 +22,7 @@ pub(crate) fn load(
 fn loaded_snapshot(snapshot: MihomoSnapshot) -> LoadedSnapshot {
     let catalog = to_policy_catalog(&snapshot).ok();
     let providers = load_providers(&snapshot.providers);
+    let node_latency_records = extract_node_latency_records(&snapshot);
     let observed_routes = snapshot.observed_routes();
     let MihomoSnapshot {
         version,
@@ -39,6 +40,7 @@ fn loaded_snapshot(snapshot: MihomoSnapshot) -> LoadedSnapshot {
     LoadedSnapshot {
         catalog,
         providers,
+        node_latency_records,
         version,
         active_connections,
         download_total,
@@ -47,6 +49,62 @@ fn loaded_snapshot(snapshot: MihomoSnapshot) -> LoadedSnapshot {
         connections: connections.connections,
         runtime,
     }
+}
+
+fn parse_history_epoch_secs(time: Option<&str>) -> u64 {
+    time.and_then(|value| value.parse::<jiff::Timestamp>().ok())
+        .and_then(|timestamp| u64::try_from(timestamp.as_second()).ok())
+        .unwrap_or(0)
+}
+
+fn rounded_u16_delay(delay: f64) -> Option<u16> {
+    if !delay.is_finite() || delay <= 0.0 {
+        return None;
+    }
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let rounded = delay.round().clamp(1.0, f64::from(u16::MAX)) as u16;
+    Some(rounded)
+}
+
+fn extract_node_latency_records(
+    snapshot: &MihomoSnapshot,
+) -> std::collections::BTreeMap<String, (Option<u16>, u64)> {
+    let mut records = std::collections::BTreeMap::<String, (Option<u16>, u64)>::new();
+    let proxies = snapshot
+        .providers
+        .iter()
+        .flat_map(|provider| provider.proxies.iter())
+        .chain(snapshot.proxies.iter());
+    for proxy in proxies {
+        if !proxy.all.is_empty() {
+            continue;
+        }
+        let candidate = if let Some((delay, time)) = proxy.latest_latency_entry() {
+            let Some(ms) = rounded_u16_delay(delay) else {
+                continue;
+            };
+            (Some(ms), parse_history_epoch_secs(time))
+        } else if let Some(time) = proxy.latest_history_time() {
+            let ts = parse_history_epoch_secs(Some(time));
+            if ts == 0 {
+                continue;
+            }
+            (None, ts)
+        } else {
+            continue;
+        };
+        match records.get(&proxy.name).copied() {
+            Some((existing_delay, existing_ts))
+                if existing_ts > candidate.1
+                    || (existing_ts == candidate.1
+                        && existing_delay.is_some()
+                        && candidate.0.is_none()) => {}
+            _ => {
+                records.insert(proxy.name.clone(), candidate);
+            }
+        }
+    }
+    records
 }
 
 pub(super) fn validate_managed_runtime(
