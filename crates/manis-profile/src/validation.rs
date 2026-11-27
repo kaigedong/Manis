@@ -270,7 +270,13 @@ fn validate_provider_refs(providers: &[Name], known: &HashSet<&Name>) -> Result<
     }
 }
 
-pub(crate) fn default_proxy_dns_servers() -> Vec<ProxyDnsServer> {
+/// Returns the built-in public `DoH` servers used when neither custom nor subscription resolvers
+/// are configured.
+///
+/// # Panics
+/// Never panics at runtime; panics only if a built-in constant URL fails HTTPS validation.
+#[must_use]
+pub fn default_proxy_dns_servers() -> Vec<ProxyDnsServer> {
     [
         "https://223.5.5.5/dns-query",
         "https://1.12.12.12/dns-query",

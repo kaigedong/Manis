@@ -292,6 +292,7 @@ fn entry_heading(name: &str) -> &'static str {
         "local-routing-rule-groups.state" => "本地规则组",
         "routing-rule-group-order.state" => "规则来源顺序",
         "routing.mode" => "路由模式",
+        "proxy-dns.state" => "节点域名解析",
         "language.preference" => "语言偏好",
         "workspace.state" => "工作区状态",
         name if has_extension(name, "policy") || has_extension(name, "group") => "策略组",

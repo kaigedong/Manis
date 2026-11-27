@@ -21,9 +21,12 @@ use super::{configuration_section_label, language_preference_label};
 mod kernel;
 mod language;
 pub(in crate::app) mod navigation;
+pub(super) mod proxy_dns;
 mod routing;
 mod startup;
 mod updates;
+
+pub(in crate::app) use proxy_dns::ProxyDnsEditorState;
 
 /// Expansion state for collapsible desktop settings cards (collapsed by default).
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]

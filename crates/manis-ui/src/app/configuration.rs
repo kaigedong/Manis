@@ -42,7 +42,7 @@ pub(in crate::app) use source_mutations::{
 };
 mod transfer;
 
-pub(super) use settings::SettingsDisclosureState;
+pub(super) use settings::{ProxyDnsEditorState, SettingsDisclosureState};
 pub(super) use transfer::ConfigurationTransfer;
 
 const MAX_MANUAL_RULE_INPUT_BYTES: usize = 1_024;
@@ -563,7 +563,13 @@ impl ManisApp {
                 .child(self.startup_panel(theme, compact, cx))
                 .child(self.configuration_transfer_panel(theme, compact, cx))
                 .into_any_element(),
-            self.kernel_panel(theme, compact, cx).into_any_element(),
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(20.0))
+                .child(self.kernel_panel(theme, compact, cx))
+                .child(self.proxy_dns_panel(theme, compact, cx))
+                .into_any_element(),
             self.source_panel(theme, compact, cx).into_any_element(),
             self.rule_source_manager(rule_busy, theme, compact, cx)
                 .into_any_element(),

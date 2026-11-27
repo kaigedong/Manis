@@ -49,6 +49,7 @@ pub(super) fn validate_store(
     mihomo::load_collapsed_groups_in(directory)?;
     mihomo::load_node_selection_preferences_in(directory)?;
     mihomo::load_routing_mode_in(directory)?;
+    mihomo::load_custom_proxy_dns_servers_in(directory)?;
     crate::localization::load_language_preference_in(directory)
         .map(|_: LanguagePreference| ())
         .map_err(|_| BackupError::InvalidConfiguration)?;

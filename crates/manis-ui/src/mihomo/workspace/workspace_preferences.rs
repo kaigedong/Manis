@@ -1,6 +1,8 @@
 use super::{
-    Path, ProfileMode, ROUTING_MODE_FILE, RoutingMode, SubscriptionStoreError,
-    WORKSPACE_STATE_FILE, valid_workspace_group_id,
+    CUSTOM_PROXY_DNS_FILE, CUSTOM_PROXY_DNS_VERSION, MAX_CUSTOM_PROXY_DNS_FILE_BYTES,
+    MAX_SUBSCRIPTION_PROXY_DNS_SERVERS, Path, ProfileMode, ProxyDnsServer, ROUTING_MODE_FILE,
+    RoutingMode, SubscriptionStoreError, WORKSPACE_STATE_FILE, decode_hex, encode_hex,
+    valid_workspace_group_id,
 };
 #[cfg(not(windows))]
 use super::{require_clean_absolute_store, write_private_atomic};
@@ -109,4 +111,88 @@ pub(crate) fn profile_mode(mode: RoutingMode) -> ProfileMode {
         RoutingMode::Global => ProfileMode::Global,
         RoutingMode::Rule => ProfileMode::Rule,
     }
+}
+
+#[cfg(not(windows))]
+pub(crate) fn save_custom_proxy_dns_servers_in(
+    directory: &Path,
+    servers: &[ProxyDnsServer],
+) -> Result<(), SubscriptionStoreError> {
+    require_clean_absolute_store(directory)?;
+    if servers.len() > MAX_SUBSCRIPTION_PROXY_DNS_SERVERS {
+        return Err(SubscriptionStoreError::InvalidSource);
+    }
+    let mut deduplicated: Vec<&ProxyDnsServer> = Vec::with_capacity(servers.len());
+    for server in servers {
+        if !deduplicated.contains(&server) {
+            deduplicated.push(server);
+        }
+    }
+    if deduplicated.is_empty() {
+        return crate::config_toml::remove_entry(directory, CUSTOM_PROXY_DNS_FILE)
+            .map_err(|_error| SubscriptionStoreError::StoreUnavailable);
+    }
+    let mut lines = Vec::with_capacity(deduplicated.len() + 1);
+    lines.push(CUSTOM_PROXY_DNS_VERSION.to_owned());
+    for server in deduplicated {
+        lines.push(format!("proxy-dns\t{}", encode_hex(server.as_str())));
+    }
+    let contents = format!("{}\n", lines.join("\n"));
+    write_private_atomic(directory, CUSTOM_PROXY_DNS_FILE, contents.as_bytes())
+        .map(|_path| ())
+        .map_err(|_error| SubscriptionStoreError::StoreUnavailable)
+}
+
+#[cfg(windows)]
+pub(crate) fn save_custom_proxy_dns_servers_in(
+    _directory: &Path,
+    _servers: &[ProxyDnsServer],
+) -> Result<(), SubscriptionStoreError> {
+    Err(SubscriptionStoreError::StoreUnavailable)
+}
+
+#[cfg(not(windows))]
+pub(crate) fn load_custom_proxy_dns_servers_in(
+    directory: &Path,
+) -> Result<Vec<ProxyDnsServer>, SubscriptionStoreError> {
+    require_clean_absolute_store(directory)?;
+    let Some(contents) = crate::config_toml::read_entry(
+        directory,
+        CUSTOM_PROXY_DNS_FILE,
+        MAX_CUSTOM_PROXY_DNS_FILE_BYTES,
+    )
+    .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?
+    else {
+        return Ok(Vec::new());
+    };
+    let mut lines = contents.lines().filter(|line| !line.trim().is_empty());
+    let Some(version) = lines.next() else {
+        return Ok(Vec::new());
+    };
+    if version != CUSTOM_PROXY_DNS_VERSION {
+        return Err(SubscriptionStoreError::StoredSourceUnavailable);
+    }
+    let mut servers = Vec::new();
+    for line in lines {
+        let Some(("proxy-dns", encoded)) = line.split_once('\t') else {
+            return Err(SubscriptionStoreError::StoredSourceUnavailable);
+        };
+        let decoded = decode_hex(encoded)?;
+        let server = ProxyDnsServer::parse_https(&decoded)
+            .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
+        if servers.len() >= MAX_SUBSCRIPTION_PROXY_DNS_SERVERS {
+            return Err(SubscriptionStoreError::StoredSourceUnavailable);
+        }
+        if !servers.contains(&server) {
+            servers.push(server);
+        }
+    }
+    Ok(servers)
+}
+
+#[cfg(windows)]
+pub(crate) fn load_custom_proxy_dns_servers_in(
+    _directory: &Path,
+) -> Result<Vec<ProxyDnsServer>, SubscriptionStoreError> {
+    Ok(Vec::new())
 }

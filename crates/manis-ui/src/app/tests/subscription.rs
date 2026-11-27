@@ -51,6 +51,7 @@ fn policy_node_source_uses_the_imported_subscription_name() {
         generation: 0,
         refresh_interval: mihomo::RemoteSourceRefreshInterval::Manual,
         last_successful_update_unix_secs: 0,
+        proxy_server_nameservers: Vec::new(),
     });
     let node = PolicyNode {
         id: ProxyId::new("HK 03"),
@@ -83,6 +84,7 @@ fn scheduled_refresh_selects_one_due_source_with_subscriptions_first() {
         generation: 0,
         refresh_interval: mihomo::RemoteSourceRefreshInterval::Hourly,
         last_successful_update_unix_secs: 100,
+        proxy_server_nameservers: Vec::new(),
     };
     let mut rule_source = mihomo::StoredQxRuleSource {
         id: "qx-rule-source:fixture".to_owned(),

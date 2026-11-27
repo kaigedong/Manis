@@ -2,17 +2,23 @@ use super::{
     HashMap, LoadError, LogLevel, MANUAL_ROUTING_RULE_GROUP_ID, MAX_SUBSCRIPTION_PROXY_DNS_SERVERS,
     Path, Profile, ProxyDnsServer, Rule, SecretUrl, StoredSingleNode, VlessProxy,
     apply_qx_rule_sources, compile_managed_policy_groups, configured_mixed_port,
-    load_local_routing_rule_groups_in, load_managed_policy_groups_in, load_qx_rule_sources_in,
-    load_routing_mode_in, load_routing_rule_group_order_in, load_single_node_sources_in,
-    load_subscription_sources_in, normalized_routing_rule_group_order, profile_mode, record_event,
+    load_custom_proxy_dns_servers_in, load_local_routing_rule_groups_in,
+    load_managed_policy_groups_in, load_qx_rule_sources_in, load_routing_mode_in,
+    load_routing_rule_group_order_in, load_single_node_sources_in, load_subscription_sources_in,
+    normalized_routing_rule_group_order, profile_mode, record_event,
 };
 
 pub(super) fn compile_saved_profile(
     store_dir: &Path,
     base_subscription: Option<SecretUrl>,
 ) -> Result<Profile, LoadError> {
-    let (subscriptions, mut provider_indexes, nameservers) =
+    let (subscriptions, mut provider_indexes, subscription_nameservers) =
         load_subscription_inputs(store_dir, base_subscription)?;
+    let custom_nameservers = load_custom_proxy_dns_servers_in(store_dir).map_err(|error| {
+        LoadError::Runtime(format!(
+            "custom proxy DNS servers could not be read: {error}"
+        ))
+    })?;
     let stored_single_nodes = load_enabled_single_nodes(store_dir)?;
     let (local_provider_paths, vless_nodes) = compile_single_node_inputs(
         &stored_single_nodes,
@@ -27,8 +33,13 @@ pub(super) fn compile_saved_profile(
         &stored_single_nodes,
         &provider_indexes,
     )?;
-    if !nameservers.is_empty() {
-        profile.set_proxy_server_nameservers(nameservers);
+    let effective_nameservers = if custom_nameservers.is_empty() {
+        subscription_nameservers
+    } else {
+        custom_nameservers
+    };
+    if !effective_nameservers.is_empty() {
+        profile.set_proxy_server_nameservers(effective_nameservers);
     }
     apply_saved_routing(store_dir, &mut profile, bootstrap_fallback)?;
     Ok(profile)

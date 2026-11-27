@@ -211,6 +211,7 @@ pub(crate) fn is_config_entry_name(name: &str) -> bool {
             | "routing-rule-group-order.state"
             | "workspace.state"
             | "routing.mode"
+            | "proxy-dns.state"
             | "node-selection.state"
             | "manual-routing-rules.state"
             | "local-routing-rule-groups.state"

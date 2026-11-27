@@ -226,6 +226,7 @@ impl ManisApp {
             existing.refresh_interval = subscription.refresh_interval;
             existing.last_successful_update_unix_secs =
                 subscription.last_successful_update_unix_secs;
+            existing.proxy_server_nameservers = subscription.proxy_server_nameservers;
             return;
         }
         self.imported_subscriptions.push(ImportedSubscription {
@@ -242,6 +243,7 @@ impl ManisApp {
             generation,
             refresh_interval: subscription.refresh_interval,
             last_successful_update_unix_secs: subscription.last_successful_update_unix_secs,
+            proxy_server_nameservers: subscription.proxy_server_nameservers,
         });
     }
 }

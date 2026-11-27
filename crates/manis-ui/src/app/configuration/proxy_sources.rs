@@ -225,6 +225,7 @@ mod subscription_import_concurrency_tests {
             generation: 7,
             refresh_interval: RemoteSourceRefreshInterval::Hourly,
             last_successful_update_unix_secs: 0,
+            proxy_server_nameservers: Vec::new(),
         }
     }
 

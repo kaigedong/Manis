@@ -89,6 +89,7 @@ impl ManisApp {
                 apply,
             }) => {
                 source.enabled = stored.enabled;
+                source.proxy_server_nameservers = stored.proxy_server_nameservers;
                 source.state = if stored.enabled {
                     ImportedSubscriptionState::Pending(completion.kind)
                 } else {

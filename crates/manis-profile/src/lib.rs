@@ -32,6 +32,7 @@ pub use render_api::{
 pub use rules::{Rule, RuleCondition};
 pub use source::{HealthCheck, Name, ProxyProvider, ProxyProviderSource, SecretUrl};
 pub use storage::{replace_private_if_unchanged, write_private_atomic};
+pub use validation::default_proxy_dns_servers;
 pub use vless::{OutboundProxy, VlessProxy};
 
 pub(crate) use parsing::{
@@ -42,8 +43,7 @@ pub(crate) use parsing::{
 pub(crate) use render_support::{policy_name, render_rule};
 pub(crate) use source::MAX_SECRET_URL_BYTES;
 pub(crate) use validation::{
-    compile_user_groups, default_proxy_dns_servers, is_rule_value, is_safe_relative_path,
-    validate_groups, validate_rule,
+    compile_user_groups, is_rule_value, is_safe_relative_path, validate_groups, validate_rule,
 };
 pub(crate) use vless::{
     MAX_VLESS_FIELD_BYTES, VlessSecurity, VlessSecurityOptions, VlessTransport,

@@ -104,10 +104,22 @@ impl ManisApp {
         let controls_enabled = presentation.controls_enabled;
         let toggle_id = subscription.id.clone();
         let enabled = subscription.enabled;
+        let doh_segment = if subscription.proxy_server_nameservers.is_empty() {
+            String::new()
+        } else {
+            format!(
+                " · {}",
+                copy::configuration::subscription_doh_count(
+                    language,
+                    subscription.proxy_server_nameservers.len()
+                )
+            )
+        };
         let meta_line = format!(
-            "{} · {} · {}",
+            "{} · {}{} · {}",
             refresh_interval_label(subscription.refresh_interval, language),
             presentation.updated,
+            doh_segment,
             subscription.source.expose_to(str::to_owned),
         );
         div()

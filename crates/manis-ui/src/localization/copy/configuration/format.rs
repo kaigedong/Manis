@@ -482,3 +482,51 @@ pub(crate) fn local_rule_group_delete_notice(
         Language::SimplifiedChinese => format!("将删除“{name}”以及其中的 {count}。"),
     }
 }
+
+pub(crate) fn proxy_dns_count_summary(language: Language, source: &str, count: usize) -> String {
+    match language {
+        Language::English => format!("{source} · {count}"),
+        Language::SimplifiedChinese => format!("{source} · {count} 条"),
+    }
+}
+
+pub(crate) fn proxy_dns_invalid_line(language: Language, line_number: usize) -> String {
+    match language {
+        Language::English => {
+            format!("Line {line_number} must be a valid https:// DoH URL without spaces.")
+        }
+        Language::SimplifiedChinese => {
+            format!("第 {line_number} 行必须是有效的 https:// DoH 地址且不能包含空格。")
+        }
+    }
+}
+
+pub(crate) fn proxy_dns_too_many(language: Language, limit: usize) -> String {
+    match language {
+        Language::English => format!("At most {limit} DoH servers can be configured."),
+        Language::SimplifiedChinese => format!("最多可配置 {limit} 条 DoH 服务器。"),
+    }
+}
+
+pub(crate) fn proxy_dns_saved(language: Language, custom_count: usize, suffix: &str) -> String {
+    if custom_count == 0 {
+        match language {
+            Language::English => format!("Restored automatic node DNS{suffix}"),
+            Language::SimplifiedChinese => format!("已恢复自动节点域名解析{suffix}"),
+        }
+    } else {
+        match language {
+            Language::English => {
+                format!("Saved {custom_count} custom DoH server(s){suffix}")
+            }
+            Language::SimplifiedChinese => format!("已保存 {custom_count} 条自定义 DoH{suffix}"),
+        }
+    }
+}
+
+pub(crate) fn subscription_doh_count(language: Language, count: usize) -> String {
+    match language {
+        Language::English => format!("{count} DoH"),
+        Language::SimplifiedChinese => format!("{count} 条 DoH"),
+    }
+}

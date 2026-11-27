@@ -38,6 +38,7 @@ pub(in crate::app) struct ImportedSubscription {
     pub(in crate::app) generation: u64,
     pub(in crate::app) refresh_interval: RemoteSourceRefreshInterval,
     pub(in crate::app) last_successful_update_unix_secs: u64,
+    pub(in crate::app) proxy_server_nameservers: Vec<manis_profile::ProxyDnsServer>,
 }
 
 impl ImportedSubscription {
@@ -57,6 +58,7 @@ impl ImportedSubscription {
             generation: 0,
             refresh_interval: stored.refresh_interval,
             last_successful_update_unix_secs: stored.last_successful_update_unix_secs,
+            proxy_server_nameservers: stored.proxy_server_nameservers,
         }
     }
 }

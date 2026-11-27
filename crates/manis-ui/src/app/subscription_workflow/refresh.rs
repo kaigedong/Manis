@@ -132,6 +132,7 @@ impl ManisApp {
                 subscription.refresh_interval = stored.refresh_interval;
                 subscription.last_successful_update_unix_secs =
                     stored.last_successful_update_unix_secs;
+                subscription.proxy_server_nameservers = stored.proxy_server_nameservers;
                 self.rule_sources
                     .refresh_retry_not_before
                     .remove(&DueRemoteSource::Subscription(id.to_owned()).scheduler_key());
