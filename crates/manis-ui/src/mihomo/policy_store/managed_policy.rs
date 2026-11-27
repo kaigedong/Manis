@@ -12,7 +12,7 @@ use super::{
 #[cfg(not(windows))]
 use super::{
     private_store_entries, read_private_source_allow_empty, remove_private_source,
-    require_clean_absolute_store, write_private_atomic,
+    require_clean_absolute_store, write_config_entry_bytes,
 };
 
 pub(crate) fn new_managed_policy_id() -> String {
@@ -283,7 +283,7 @@ pub(crate) fn save_managed_policy_in(
     }
     let contents = encode_managed_policy(group)?;
     let file_name = format!("{}{MANAGED_POLICY_SUFFIX}", group.id);
-    write_private_atomic(directory, &file_name, contents.as_bytes())
+    write_config_entry_bytes(directory, &file_name, contents.as_bytes())
         .map(|_path| ())
         .map_err(|_error| SubscriptionStoreError::StoreUnavailable)
 }

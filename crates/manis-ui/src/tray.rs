@@ -83,6 +83,14 @@ fn manis_app(cx: &mut App) -> Entity<ManisApp> {
     app
 }
 
+/// Installs the local same-user Control API server backed by the global `ManisApp`.
+pub fn install_control_api(cx: &mut App) {
+    if let Some(directory) = crate::control_api::default_store_dir() {
+        let app = manis_app(cx);
+        crate::control_api::install_in(&directory, app, cx);
+    }
+}
+
 /// Opens the main Manis window, or activates it if it is already open.
 pub fn show_or_open_window(cx: &mut App) {
     if let Err(error) = try_show_or_open_window(cx) {

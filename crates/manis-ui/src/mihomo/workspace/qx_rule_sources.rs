@@ -10,7 +10,7 @@ use super::{
     LEGACY_RELAY_QX_RULE_SOURCE_VERSION, MAX_QX_RULE_SOURCE_FILE_BYTES, QX_RULE_SOURCE_PREFIX,
     QX_RULE_SOURCE_SUFFIX, QX_RULE_SOURCE_VERSION, SecretUrl, current_unix_secs, decode_hex,
     encode_hex, next_stored_source_id, private_store_entries, read_private_source_allow_empty_max,
-    remove_private_source, require_clean_absolute_store, valid_stored_id, write_private_atomic,
+    remove_private_source, require_clean_absolute_store, valid_stored_id, write_config_entry_bytes,
 };
 
 #[cfg(all(not(windows), test))]
@@ -56,7 +56,7 @@ pub(crate) fn save_named_qx_rule_source_in(
         refresh_interval: RemoteSourceRefreshInterval::Manual,
         last_successful_update_unix_secs,
     })?;
-    write_private_atomic(directory, &file_name, contents.as_bytes())
+    write_config_entry_bytes(directory, &file_name, contents.as_bytes())
         .map_err(|_error| SubscriptionStoreError::StoreUnavailable)?;
     Ok(SaveQxRuleSourceOutcome::Created(StoredQxRuleSource {
         id,
@@ -470,7 +470,7 @@ fn write_qx_rule_source_in(
         last_successful_update_unix_secs: write.last_successful_update_unix_secs,
     })?;
     let file_name = qx_rule_source_file_name(write.id)?;
-    write_private_atomic(directory, &file_name, contents.as_bytes())
+    write_config_entry_bytes(directory, &file_name, contents.as_bytes())
         .map_err(|_error| SubscriptionStoreError::StoreUnavailable)?;
     Ok(StoredQxRuleSource {
         id: write.id.to_owned(),

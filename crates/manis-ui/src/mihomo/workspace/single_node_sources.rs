@@ -4,7 +4,7 @@ use super::{
     SAVED_SINGLE_NODE_SUFFIX, SAVED_SINGLE_NODE_VERSION, SingleNodeSource, decode_hex, encode_hex,
     next_stored_source_id, private_store_entries, read_private_source_allow_empty_max,
     remove_private_source, require_clean_absolute_store, valid_stored_id,
-    validate_subscription_source_name, write_private_atomic,
+    validate_subscription_source_name, write_config_entry_bytes,
 };
 use super::{Path, StoredSingleNode, SubscriptionStoreError};
 
@@ -41,7 +41,7 @@ pub(crate) fn save_single_node_source_with_options_in(
     let file_name = format!("{id}{SAVED_SINGLE_NODE_SUFFIX}");
     let name = validate_subscription_source_name(name)?;
     let encoded = encode_single_node_source(&id, input, &name, enabled)?;
-    write_private_atomic(directory, &file_name, encoded.as_bytes())
+    write_config_entry_bytes(directory, &file_name, encoded.as_bytes())
         .map_err(|_error| SubscriptionStoreError::StoreUnavailable)?;
     Ok(StoredSingleNode {
         id,
@@ -91,7 +91,7 @@ pub(crate) fn update_single_node_source_in(
     }
     let name = validate_subscription_source_name(name)?;
     let encoded = encode_single_node_source(id, input, &name, enabled)?;
-    write_private_atomic(
+    write_config_entry_bytes(
         directory,
         &format!("{id}{SAVED_SINGLE_NODE_SUFFIX}"),
         encoded.as_bytes(),

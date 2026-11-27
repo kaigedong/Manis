@@ -5,7 +5,7 @@ use super::{
     valid_workspace_group_id,
 };
 #[cfg(not(windows))]
-use super::{require_clean_absolute_store, write_private_atomic};
+use super::{require_clean_absolute_store, write_config_entry_bytes};
 
 #[cfg(not(windows))]
 pub(crate) fn save_collapsed_groups_in<'a>(
@@ -19,7 +19,7 @@ pub(crate) fn save_collapsed_groups_in<'a>(
     ids.sort_unstable();
     ids.dedup();
     let contents = ids.join("\n");
-    write_private_atomic(directory, WORKSPACE_STATE_FILE, contents.as_bytes())
+    write_config_entry_bytes(directory, WORKSPACE_STATE_FILE, contents.as_bytes())
         .map(|_path| ())
         .map_err(|_error| SubscriptionStoreError::StoreUnavailable)
 }
@@ -67,7 +67,7 @@ pub(crate) fn save_routing_mode_in(
     directory: &Path,
     mode: RoutingMode,
 ) -> Result<(), SubscriptionStoreError> {
-    write_private_atomic(directory, ROUTING_MODE_FILE, mode.wire_value().as_bytes())
+    write_config_entry_bytes(directory, ROUTING_MODE_FILE, mode.wire_value().as_bytes())
         .map(|_path| ())
         .map_err(|_error| SubscriptionStoreError::StoreUnavailable)
 }
@@ -152,7 +152,7 @@ pub(crate) fn save_custom_proxy_dns_entries_in(
         lines.push(format!("{key}\t{}", encode_hex(entry.server.as_str())));
     }
     let contents = format!("{}\n", lines.join("\n"));
-    write_private_atomic(directory, CUSTOM_PROXY_DNS_FILE, contents.as_bytes())
+    write_config_entry_bytes(directory, CUSTOM_PROXY_DNS_FILE, contents.as_bytes())
         .map(|_path| ())
         .map_err(|_error| SubscriptionStoreError::StoreUnavailable)
 }

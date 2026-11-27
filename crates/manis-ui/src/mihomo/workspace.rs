@@ -452,7 +452,7 @@ pub(super) fn require_clean_absolute_store(directory: &Path) -> Result<(), Subsc
     }
 }
 
-pub(super) fn write_private_atomic(
+pub(super) fn write_config_entry_bytes(
     directory: &Path,
     file_name: &str,
     bytes: &[u8],

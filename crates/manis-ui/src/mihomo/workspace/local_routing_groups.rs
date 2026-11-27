@@ -8,7 +8,7 @@ use super::{
     validate_subscription_source_name,
 };
 #[cfg(not(windows))]
-use super::{require_clean_absolute_store, write_private_atomic};
+use super::{require_clean_absolute_store, write_config_entry_bytes};
 use crate::manual_rule::{ManualRule, ManualRuleKind};
 
 /// A local routing rule group: a name, one target policy and its own rules, stored without a URL.
@@ -190,7 +190,7 @@ pub(crate) fn save_local_routing_rule_groups_in(
     groups: &[LocalRoutingRuleGroup],
 ) -> Result<(), SubscriptionStoreError> {
     let contents = encode_local_routing_rule_groups(groups)?;
-    write_private_atomic(
+    write_config_entry_bytes(
         directory,
         LOCAL_ROUTING_RULE_GROUPS_FILE,
         contents.as_bytes(),

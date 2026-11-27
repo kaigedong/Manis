@@ -31,6 +31,7 @@ use crate::{
 mod about;
 mod activity;
 mod configuration;
+mod control;
 mod exit_ip;
 mod logs;
 mod nodes;

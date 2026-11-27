@@ -8,10 +8,12 @@ mod assets;
 mod auto_connect;
 mod autostart;
 mod brand;
+mod cli;
 mod components;
 mod config_backup;
 mod config_jsonc;
 mod config_toml;
+mod control_api;
 mod core_update;
 mod diagnostics;
 mod direct_rule;
@@ -22,6 +24,7 @@ mod localization;
 #[cfg(target_os = "macos")]
 mod macos_privileged;
 mod manual_rule;
+mod mcp;
 mod mihomo;
 mod rule_source;
 mod single_instance;
@@ -37,11 +40,12 @@ pub use app::windows::{
     AuxiliaryKind as UtilityWindowFixture, fixture_root as utility_window_fixture_root,
 };
 pub use assets::Assets;
+pub use cli::try_run_from_env as try_run_cli;
 #[cfg(feature = "snapshot-fixtures")]
 pub use components::button_gallery_fixture;
 pub use single_instance::SingleInstance;
 pub use single_instance::claim as claim_single_instance;
-pub use tray::{install as install_tray, open_window, show_or_open_window};
+pub use tray::{install as install_tray, install_control_api, open_window, show_or_open_window};
 
 /// Returns the version embedded by the packaging workflow.
 #[must_use]

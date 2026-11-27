@@ -2,7 +2,7 @@
 use super::subscription_sources::decode_subscription_source;
 use super::{
     IMPORTED_SUBSCRIPTION_FILE, MAX_SUBSCRIPTION_FILE_BYTES, Path, SecretUrl,
-    SubscriptionStoreError, require_clean_absolute_store, write_private_atomic,
+    SubscriptionStoreError, require_clean_absolute_store, write_config_entry_bytes,
 };
 
 #[cfg(test)]
@@ -12,7 +12,7 @@ pub(crate) fn save_imported_subscription_in(
 ) -> Result<SecretUrl, SubscriptionStoreError> {
     let subscription =
         SecretUrl::parse_subscription(input).map_err(|_| SubscriptionStoreError::InvalidSource)?;
-    write_private_atomic(directory, IMPORTED_SUBSCRIPTION_FILE, input.as_bytes())
+    write_config_entry_bytes(directory, IMPORTED_SUBSCRIPTION_FILE, input.as_bytes())
         .map_err(|_| SubscriptionStoreError::StoreUnavailable)?;
     Ok(subscription)
 }

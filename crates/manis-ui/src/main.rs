@@ -1,17 +1,19 @@
+use std::process::ExitCode;
+
 use gpui::App;
 use gpui_platform::application;
 use manis_ui::{
-    Assets, claim_single_instance, init, install_tray, open_window, show_or_open_window,
+    Assets, claim_single_instance, init, install_control_api, install_tray, open_window,
+    show_or_open_window, try_run_cli,
 };
 
-fn main() {
-    if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("--version")) {
-        println!("Manis {}", manis_ui::version());
-        return;
+fn main() -> ExitCode {
+    if let Some(code) = try_run_cli() {
+        return code;
     }
     let instance = claim_single_instance();
     if !instance.is_primary() {
-        return;
+        return ExitCode::SUCCESS;
     }
     let application = application().with_assets(Assets);
     application.on_reopen(show_or_open_window);
@@ -25,7 +27,9 @@ fn main() {
             cx.quit();
         } else {
             instance.install(cx);
+            install_control_api(cx);
             cx.activate(true);
         }
     });
+    ExitCode::SUCCESS
 }

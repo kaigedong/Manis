@@ -8,7 +8,7 @@ use super::{
     STORED_SUBSCRIPTION_PREFIX, STORED_SUBSCRIPTION_SUFFIX, STORED_SUBSCRIPTION_VERSION, SecretUrl,
     current_unix_secs, decode_hex, encode_hex, next_stored_source_id, private_store_entries,
     read_private_source_allow_empty_max, remove_private_source, require_clean_absolute_store,
-    valid_stored_id, write_private_atomic,
+    valid_stored_id, write_config_entry_bytes,
 };
 use super::{
     MAX_SUBSCRIPTION_SOURCE_NAME_BYTES, Path, PathBuf, ProxyDnsServer, RemoteSourceRefreshInterval,
@@ -82,7 +82,7 @@ pub(crate) fn save_subscription_source_with_options_in(
         last_successful_update_unix_secs,
         &[],
     )?;
-    write_private_atomic(directory, &file_name, contents.as_bytes())
+    write_config_entry_bytes(directory, &file_name, contents.as_bytes())
         .map_err(|_error| SubscriptionStoreError::StoreUnavailable)?;
     Ok(StoredSubscription {
         id,
@@ -426,7 +426,7 @@ fn write_subscription_source_in(
         write.proxy_server_nameservers,
     )?;
     let file_name = subscription_source_file_name(write.id)?;
-    write_private_atomic(directory, &file_name, contents.as_bytes())
+    write_config_entry_bytes(directory, &file_name, contents.as_bytes())
         .map_err(|_error| SubscriptionStoreError::StoreUnavailable)?;
     Ok(StoredSubscription {
         id: write.id.to_owned(),

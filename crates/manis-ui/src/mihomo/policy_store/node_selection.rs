@@ -5,7 +5,7 @@ use super::super::{
     decode_hex, encode_hex, storage_version_supported,
 };
 #[cfg(not(windows))]
-use super::{require_clean_absolute_store, write_private_atomic};
+use super::{require_clean_absolute_store, write_config_entry_bytes};
 
 fn encode_node_selection_preferences(
     preferences: &NodeSelectionPreferences,
@@ -161,7 +161,7 @@ pub(crate) fn save_node_selection_preferences_in(
 ) -> Result<(), SubscriptionStoreError> {
     preferences.validate()?;
     let contents = encode_node_selection_preferences(preferences)?;
-    write_private_atomic(
+    write_config_entry_bytes(
         directory,
         NODE_SELECTION_PREFERENCES_FILE,
         contents.as_bytes(),

@@ -28,7 +28,7 @@ use super::{
 use manis_core::{ManagedPolicyGroup, ManagedPolicyIcon, ManagedPolicyStrategy};
 
 #[cfg(not(windows))]
-fn write_private_atomic(
+fn write_config_entry_bytes(
     directory: &Path,
     file_name: &str,
     bytes: &[u8],

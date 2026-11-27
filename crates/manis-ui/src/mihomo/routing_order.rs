@@ -11,7 +11,7 @@ use super::{
 };
 
 #[cfg(not(windows))]
-fn write_private_atomic(
+fn write_config_entry_bytes(
     directory: &Path,
     file_name: &str,
     bytes: &[u8],
@@ -137,7 +137,7 @@ pub(crate) fn save_routing_rule_group_order_in(
         contents.push('\n');
         contents.push_str(id);
     }
-    write_private_atomic(
+    write_config_entry_bytes(
         directory,
         ROUTING_RULE_GROUP_ORDER_FILE,
         contents.as_bytes(),
