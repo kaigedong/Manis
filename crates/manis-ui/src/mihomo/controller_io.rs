@@ -404,6 +404,32 @@ pub(super) fn running_managed_endpoint(
         .map(|endpoint| endpoint.uri())
 }
 
+pub(super) fn patch_mihomo_tun(
+    endpoint: &str,
+    enabled: bool,
+    controller_secret: Option<&str>,
+) -> Result<(), MihomoError> {
+    #[cfg(unix)]
+    if let Some(socket_path) = unix_socket_path(endpoint)? {
+        let client = MihomoClient::new(
+            ControllerConfig::default(),
+            UnixSocketTransport::new(socket_path),
+        );
+        return client.set_tun_enabled(enabled);
+    }
+
+    #[cfg(not(unix))]
+    if endpoint.starts_with("unix://") {
+        return Err(MihomoError::InvalidConfig(
+            "Unix controller sockets are not supported on this platform".to_owned(),
+        ));
+    }
+
+    let config = with_controller_secret(ControllerConfig::new(endpoint)?, controller_secret);
+    let client = MihomoClient::new(config, StdHttpTransport::default());
+    client.set_tun_enabled(enabled)
+}
+
 pub(super) fn reload_mihomo_config(
     endpoint: &str,
     payload: &str,
@@ -438,8 +464,10 @@ fn reload_and_confirm_tun<T: ControllerTransport>(
 ) -> Result<(), MihomoError> {
     client.reload_config_payload(payload)?;
     let mut last_observation = "runtime config was not readable".to_owned();
-    for _ in 0..CONFIG_RELOAD_CONFIRM_READS {
-        thread::sleep(CONFIG_RELOAD_CONFIRM_INTERVAL);
+    for attempt in 0..CONFIG_RELOAD_CONFIRM_READS {
+        if attempt > 0 {
+            thread::sleep(CONFIG_RELOAD_CONFIRM_INTERVAL);
+        }
         match client.fetch_runtime_config() {
             Ok(runtime) if runtime.tun.enable == expected_tun => return Ok(()),
             Ok(runtime) => {

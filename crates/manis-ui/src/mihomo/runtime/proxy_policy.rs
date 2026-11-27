@@ -13,8 +13,9 @@ use super::super::{
     ControllerRuntime, LoadError, ManagedGeneratedProfile, ManagedPolicyRuntimeSnapshot,
     PolicyGroupBenchmarkSnapshot, ProxyDelayTarget, compile_managed_generated_profile,
     fetch_group_delay, fetch_policy_group, fetch_proxy_delay_targets_bounded_with_progress,
-    reload_mihomo_config, render_generated_profile_with_tun, running_managed_endpoint,
-    select_global_node_at_endpoint, select_policy_group_candidate, set_routing_mode,
+    patch_mihomo_tun, reload_mihomo_config, render_generated_profile_with_tun,
+    running_managed_endpoint, select_global_node_at_endpoint, select_policy_group_candidate,
+    set_routing_mode,
 };
 use super::MANAGED_KERNEL_LOCK_POISONED;
 
@@ -69,13 +70,101 @@ impl ControllerRuntime {
             ),
         );
         let (manager, spec) = self.managed_mihomo_tun_parts()?;
-        let profile = compile_managed_generated_profile(spec)?;
-        let payload = render_generated_profile_with_tun(spec, &profile, enabled)?;
         if enabled {
             self.prepare_tun_activation()?;
         }
         let controller_secret = self.controller_secret();
         let endpoint = running_managed_endpoint(manager)?;
+        let result = Self::apply_tun_toggle(spec, &endpoint, enabled, controller_secret);
+        #[cfg(target_os = "macos")]
+        let result = match result {
+            Ok(()) if !enabled => self.release_macos_tun_route(),
+            result => result,
+        };
+        match &result {
+            Ok(()) => record_event(
+                LogLevel::Info,
+                "controller.tun.succeeded",
+                format!("enabled={enabled} endpoint={endpoint}"),
+            ),
+            Err(error) => record_event(
+                LogLevel::Error,
+                "controller.tun.failed",
+                format!("enabled={enabled} error={error}"),
+            ),
+        }
+        result
+    }
+
+    fn apply_tun_toggle(
+        spec: &ManagedGeneratedProfile,
+        endpoint: &str,
+        enabled: bool,
+        controller_secret: Option<&str>,
+    ) -> Result<(), LoadError> {
+        record_event(
+            LogLevel::Info,
+            "controller.tun.patch.requested",
+            format!("enabled={enabled} method=PATCH endpoint=/configs"),
+        );
+        match patch_mihomo_tun(endpoint, enabled, controller_secret) {
+            Ok(()) => {
+                #[cfg(target_os = "macos")]
+                if enabled {
+                    match crate::macos_privileged::existing_tun_route() {
+                        Ok(Some(route)) => {
+                            record_event(
+                                LogLevel::Info,
+                                "controller.tun.patch.succeeded",
+                                format!("enabled=true {route}"),
+                            );
+                            return Ok(());
+                        }
+                        Ok(None) => {
+                            record_event(
+                                LogLevel::Warn,
+                                "controller.tun.patch.route_missing",
+                                "PATCH /configs succeeded without a macOS split-default route; falling back to full reload",
+                            );
+                        }
+                        Err(error) => {
+                            record_event(
+                                LogLevel::Warn,
+                                "controller.tun.route_probe_failed",
+                                error.to_string(),
+                            );
+                            return Ok(());
+                        }
+                    }
+                } else {
+                    record_event(
+                        LogLevel::Info,
+                        "controller.tun.patch.succeeded",
+                        "enabled=false",
+                    );
+                    return Ok(());
+                }
+                #[cfg(not(target_os = "macos"))]
+                {
+                    record_event(
+                        LogLevel::Info,
+                        "controller.tun.patch.succeeded",
+                        format!("enabled={enabled}"),
+                    );
+                    return Ok(());
+                }
+            }
+            Err(error) => {
+                record_event(
+                    LogLevel::Warn,
+                    "controller.tun.patch.fallback",
+                    format!("enabled={enabled} error={error}"),
+                );
+            }
+        }
+
+        let profile = compile_managed_generated_profile(spec)?;
+        let payload = render_generated_profile_with_tun(spec, &profile, enabled)?;
         record_event(
             LogLevel::Info,
             "controller.tun.config_reload.requested",
@@ -84,22 +173,14 @@ impl ControllerRuntime {
                 payload.len()
             ),
         );
-        let result = reload_mihomo_config(&endpoint, &payload, enabled, controller_secret)
-            .map_err(LoadError::from);
-        if result.is_ok() {
-            record_event(
-                LogLevel::Info,
-                "controller.tun.config_reload.succeeded",
-                format!("enabled={enabled} rebuild=general,dns,listeners,tun,providers"),
-            );
-        }
+        reload_mihomo_config(endpoint, &payload, enabled, controller_secret)?;
+        record_event(
+            LogLevel::Info,
+            "controller.tun.config_reload.succeeded",
+            format!("enabled={enabled} rebuild=general,dns,listeners,tun,providers"),
+        );
         #[cfg(target_os = "macos")]
-        let result = match result {
-            Ok(()) if !enabled => self.release_macos_tun_route(),
-            result => result,
-        };
-        #[cfg(target_os = "macos")]
-        if enabled && result.is_ok() {
+        if enabled {
             match crate::macos_privileged::existing_tun_route() {
                 Ok(Some(route)) => {
                     record_event(LogLevel::Info, "controller.tun.route_confirmed", route);
@@ -116,19 +197,7 @@ impl ControllerRuntime {
                 ),
             }
         }
-        match &result {
-            Ok(()) => record_event(
-                LogLevel::Info,
-                "controller.tun.succeeded",
-                format!("enabled={enabled} endpoint={endpoint}"),
-            ),
-            Err(error) => record_event(
-                LogLevel::Error,
-                "controller.tun.failed",
-                format!("enabled={enabled} error={error}"),
-            ),
-        }
-        result
+        Ok(())
     }
 
     fn prepare_tun_activation(&self) -> Result<(), LoadError> {

@@ -363,3 +363,52 @@ fn replacement_stop_failure_clears_runtime_only_after_proxy_shutdown(
         });
     }
 }
+
+#[test]
+fn configuration_editor_jsonc_produces_syntax_highlight_colors() {
+    use std::collections::BTreeSet;
+
+    use gpui_component::highlighter::{HighlightTheme, SyntaxHighlighter};
+
+    let sample = r#"{
+  "format": "manis-config-v1",
+  "routing": { "mode": "rule" },
+  "subscription": {
+    "enabled": true,
+    "interval": 600,
+    "proxyDns": ["https://20.247.42.211:36290/dns-query/clash?site=naiu"],
+  },
+}
+"#;
+    let mut highlighter = SyntaxHighlighter::new("jsonc");
+    let rope = gpui_component::Rope::from(sample);
+    assert!(highlighter.update(None, &rope, None));
+
+    for theme in [
+        HighlightTheme::default_light(),
+        HighlightTheme::default_dark(),
+    ] {
+        let styles = highlighter.styles(&(0..sample.len()), theme.as_ref());
+        assert!(
+            !styles.is_empty(),
+            "JSONC configuration must produce syntax highlight spans"
+        );
+        let distinct_colors: BTreeSet<[u32; 4]> = styles
+            .iter()
+            .filter_map(|(_, style)| style.color)
+            .map(|color| {
+                [
+                    color.h.to_bits(),
+                    color.s.to_bits(),
+                    color.l.to_bits(),
+                    color.a.to_bits(),
+                ]
+            })
+            .collect();
+        assert!(
+            distinct_colors.len() >= 3,
+            "expected distinct colors for keys, strings, booleans, and numbers; got {}",
+            distinct_colors.len()
+        );
+    }
+}

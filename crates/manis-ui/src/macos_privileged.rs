@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::time::Duration;
 
-use manis_engine::{CommandSpec, ManagedChild, ProcessExit, ProcessSpawner, StdProcessSpawner};
+use manis_engine::{CommandSpec, ManagedChild, ProcessExit, ProcessSpawner};
 
 use crate::diagnostics::{LogLevel, record_event};
 
@@ -267,8 +267,11 @@ fn wait_for_current_helper(control: &Path) -> io::Result<Output> {
 }
 
 impl ProcessSpawner for MacosPrivilegedProcessSpawner {
-    fn validate(&mut self, spec: &CommandSpec, timeout: Duration) -> io::Result<ProcessExit> {
-        StdProcessSpawner.validate(spec, timeout)
+    fn validate(&mut self, _spec: &CommandSpec, _timeout: Duration) -> io::Result<ProcessExit> {
+        // The privileged helper always runs `mihomo -t` on the exact root-staged configuration
+        // inside `start` before launching Mihomo, so running an extra unprivileged `mihomo -t`
+        // here duplicates YAML/geodata startup work without adding safety.
+        Ok(ProcessExit::success())
     }
 
     fn spawn(&mut self, spec: &CommandSpec) -> io::Result<Box<dyn ManagedChild>> {

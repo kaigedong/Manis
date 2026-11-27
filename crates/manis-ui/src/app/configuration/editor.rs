@@ -48,7 +48,7 @@ impl ManisApp {
                 Ok(text) => {
                     let editor = cx.new(|cx| {
                         gpui_component::input::EditorState::new(window, cx)
-                            .language("toml")
+                            .language("jsonc")
                             .soft_wrap(true)
                             .default_value(text)
                     });

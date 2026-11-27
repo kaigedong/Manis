@@ -18,7 +18,7 @@ const PROVIDERS_ENDPOINT: &str = "/providers/proxies";
 const RULES_ENDPOINT: &str = "/rules";
 const CONNECTIONS_ENDPOINT: &str = "/connections";
 const CONFIGS_ENDPOINT: &str = "/configs";
-const TUN_CONFIRM_INTERVAL: Duration = Duration::from_millis(250);
+const TUN_CONFIRM_INTERVAL: Duration = Duration::from_millis(35);
 const TUN_CONFIRM_READS: usize = 3;
 
 #[derive(Debug, Deserialize)]

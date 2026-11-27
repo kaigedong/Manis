@@ -204,7 +204,7 @@ private func installedCoreContents() throws -> Data? {
     return try readCore(installedMihomo, owner: 0)
 }
 
-private func managedCore(mode: MihomoCoreStagingMode) throws -> (Data, String) {
+private func managedCore(mode: MihomoCoreStagingMode) throws -> (Data, String, alreadyInstalled: Bool) {
     let core = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent("Library")
         .appendingPathComponent("Application Support")
@@ -219,11 +219,27 @@ private func managedCore(mode: MihomoCoreStagingMode) throws -> (Data, String) {
     case .explicitUpdate:
         managed = try readCore(core, owner: getuid())
     }
+    let installed = try installedCoreContents()
+    let installedDigest = installed.map {
+        SHA256.hash(data: $0).map { String(format: "%02x", $0) }.joined()
+    }
+    if mode == .activation, let installed, let installedDigest {
+        if let managed {
+            let managedDigest = SHA256.hash(data: managed)
+                .map { String(format: "%02x", $0) }
+                .joined()
+            if managedDigest == installedDigest {
+                return (installed, installedDigest, true)
+            }
+        } else {
+            return (installed, installedDigest, true)
+        }
+    }
     if administratorInstalledBuild && mode == .explicitUpdate, let managed {
         let digest = SHA256.hash(data: managed)
             .map { String(format: "%02x", $0) }
             .joined()
-        return (managed, digest)
+        return (managed, digest, digest == installedDigest)
     }
     let bundled = Bundle.main.bundleURL
         .appendingPathComponent("Contents/Resources/mihomo/mihomo")
@@ -231,14 +247,14 @@ private func managedCore(mode: MihomoCoreStagingMode) throws -> (Data, String) {
     let selected = try MihomoReleaseVerifier.selectCoreForStaging(
         managed: managed,
         bundled: readCore(bundled, owner: nil),
-        installed: installedCoreContents(),
+        installed: installed,
         mode: mode,
         latestDigest: MihomoReleaseVerifier.latestDigest
     )
     let digest = SHA256.hash(data: selected)
         .map { String(format: "%02x", $0) }
         .joined()
-    return (selected, digest)
+    return (selected, digest, digest == installedDigest)
 }
 
 private func installLocalService() throws {
@@ -411,9 +427,13 @@ do {
     case .status:
         try callHelper(timeout: .seconds(2)) { helper, reply in helper.status(withReply: reply) }
     case .stageCore(let mode):
-        let (contents, digest) = try managedCore(mode: mode)
-        try callHelper(timeout: .seconds(300)) { helper, reply in
-            helper.stageCore(contents: contents, sha256: digest, withReply: reply)
+        let (contents, digest, alreadyInstalled) = try managedCore(mode: mode)
+        if alreadyInstalled {
+            print("staged \(digest)")
+        } else {
+            try callHelper(timeout: .seconds(300)) { helper, reply in
+                helper.stageCore(contents: contents, sha256: digest, withReply: reply)
+            }
         }
     case .stop(let expectedPid):
         try callHelper { helper, reply in helper.stop(expectedPid: expectedPid, withReply: reply) }

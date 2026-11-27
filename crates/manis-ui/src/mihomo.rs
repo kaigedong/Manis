@@ -166,8 +166,8 @@ const GROUP_DELAY_TEST_URL: &str = "https://www.gstatic.com/generate_204";
 const GROUP_DELAY_TIMEOUT_MS: u16 = 5_000;
 const GROUP_DELAY_CONTROLLER_READ_TIMEOUT: Duration = Duration::from_secs(9);
 const GROUP_DELAY_WORKERS: usize = 8;
-const CONFIG_RELOAD_CONFIRM_INTERVAL: Duration = Duration::from_millis(250);
-const CONFIG_RELOAD_CONFIRM_READS: usize = 3;
+const CONFIG_RELOAD_CONFIRM_INTERVAL: Duration = Duration::from_millis(50);
+const CONFIG_RELOAD_CONFIRM_READS: usize = 15;
 static NEXT_PREVIEW_WORKSPACE: AtomicU64 = AtomicU64::new(0);
 static NEXT_STORED_SOURCE: AtomicU64 = AtomicU64::new(0);
 
@@ -519,7 +519,7 @@ use controller_io::{
 };
 use controller_io::{
     fetch_group_delay, fetch_policy_group, fetch_runtime_config, fetch_version, load_provider,
-    put_policy_group_selection, reload_mihomo_config, running_managed_endpoint,
+    patch_mihomo_tun, put_policy_group_selection, reload_mihomo_config, running_managed_endpoint,
     select_global_node_at_endpoint, select_policy_group_candidate, set_routing_mode,
     validate_managed_runtime, with_controller_secret,
 };

@@ -48,8 +48,8 @@ impl ReadinessPolicy {
 impl Default for ReadinessPolicy {
     fn default() -> Self {
         Self {
-            attempts: 50,
-            delay: Duration::from_millis(100),
+            attempts: 200,
+            delay: Duration::from_millis(25),
         }
     }
 }
@@ -227,26 +227,31 @@ impl EngineManager {
         self.child = Some(child);
 
         for attempt in 0..self.readiness.attempts {
-            let Some(child) = self.child.as_mut() else {
-                return self.fail(EngineError::InvalidConfig(
-                    "managed child ownership was lost during startup".to_owned(),
-                ));
-            };
-            let exit = match child.try_wait() {
-                Ok(exit) => exit,
-                Err(source) => {
-                    let error = EngineError::Io {
-                        operation: "poll managed kernel",
-                        source,
-                    };
-                    return self.fail_after_cleanup(error);
+            let ready = self.probe.check(self.config.controller()) == ProbeStatus::Ready;
+            let is_last_attempt = attempt + 1 == self.readiness.attempts;
+            let should_poll_child = ready || is_last_attempt || (attempt > 0 && attempt % 4 == 0);
+            if should_poll_child {
+                let Some(child) = self.child.as_mut() else {
+                    return self.fail(EngineError::InvalidConfig(
+                        "managed child ownership was lost during startup".to_owned(),
+                    ));
+                };
+                let exit = match child.try_wait() {
+                    Ok(exit) => exit,
+                    Err(source) => {
+                        let error = EngineError::Io {
+                            operation: "poll managed kernel",
+                            source,
+                        };
+                        return self.fail_after_cleanup(error);
+                    }
+                };
+                if let Some(exit) = exit {
+                    self.child = None;
+                    return self.fail(EngineError::ExitedEarly(exit));
                 }
-            };
-            if let Some(exit) = exit {
-                self.child = None;
-                return self.fail(EngineError::ExitedEarly(exit));
             }
-            if self.probe.check(self.config.controller()) == ProbeStatus::Ready {
+            if ready {
                 let endpoint = self.config.controller().clone();
                 self.state = EngineState::Ready {
                     pid,
@@ -254,7 +259,7 @@ impl EngineManager {
                 };
                 return Ok(endpoint);
             }
-            if attempt + 1 < self.readiness.attempts && !self.readiness.delay.is_zero() {
+            if !is_last_attempt && !self.readiness.delay.is_zero() {
                 thread::sleep(self.readiness.delay);
             }
         }
