@@ -6,7 +6,7 @@ use gpui::{
 use gpui_component::{Icon, IconName};
 use manis_core::WindowSizeClass;
 
-use crate::app::{AppUpdateState, ConfigurationSection, ManisApp, MihomoCoreUpdateState};
+use crate::app::{AppUpdateState, ConfigurationSection, ManisApp, MihomoCoreUpdatePhase};
 use crate::{
     app_update,
     components::{ActionRole, action_button, style_action_button},

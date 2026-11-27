@@ -62,6 +62,13 @@ impl PolicyWorkspaceState {
         }
     }
 
+    pub fn set_selection_for(&mut self, group: PolicyGroupId, proxy: ProxyId) {
+        if self.selected_group.as_ref() == Some(&group) {
+            self.selected_node = Some(proxy.clone());
+        }
+        self.selections.insert(group, proxy);
+    }
+
     #[must_use]
     pub fn selection_for(&self, group: &PolicyGroupId) -> Option<&ProxyId> {
         self.selections.get(group)

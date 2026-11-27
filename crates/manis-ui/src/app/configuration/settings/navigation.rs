@@ -60,7 +60,9 @@ impl ManisApp {
         self.configuration_section = section;
         self.configuration_scroll.scroll_to_top_of_item(index);
         self.configuration_navigation_scroll.scroll_to_item(index);
-        if section == ConfigurationSection::Updates {
+        if section == ConfigurationSection::Runtime {
+            self.maybe_auto_check_mihomo_core_update(cx);
+        } else if section == ConfigurationSection::Updates {
             self.maybe_auto_check_app_update(cx);
         }
         cx.notify();
@@ -159,7 +161,14 @@ impl ManisApp {
     ) -> Option<String> {
         match section {
             ConfigurationSection::General => Some(self.language().display_name().to_owned()),
-            ConfigurationSection::Runtime => Some(self.runtime.kind().display_name().to_owned()),
+            ConfigurationSection::Runtime => Some(
+                self.mihomo_core_update_state
+                    .available_version()
+                    .map_or_else(
+                        || self.runtime.kind().display_name().to_owned(),
+                        str::to_owned,
+                    ),
+            ),
             ConfigurationSection::ProxySources => Some(language.count(
                 CountNoun::Source,
                 self.imported_subscriptions.len() + self.saved_single_nodes.len(),

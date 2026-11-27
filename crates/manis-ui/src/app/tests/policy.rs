@@ -177,6 +177,107 @@ fn manual_policy_table_falls_back_to_the_catalog_target() {
 }
 
 #[test]
+fn selected_node_for_policy_prefers_updated_catalog_target_over_stale_workspace_selection() {
+    let mut app = ManisApp::with_fixture_controller("http://127.0.0.1:9090");
+    let policy_id = PolicyGroupId::new("Proxy");
+    let hk_id = ProxyId::new("HK 04");
+    let custom_id = ProxyId::new("233boy-tcp-66.98.118.202");
+    app.catalog = Some(
+        PolicyCatalog::try_new(vec![PolicyGroup {
+            id: policy_id.clone(),
+            name: "Proxy".to_owned(),
+            kind: PolicyGroupKind::Selector,
+            target: Some("HK 04".to_owned()),
+            nodes: [(&hk_id, "HK 04"), (&custom_id, "233boy-tcp-66.98.118.202")]
+                .into_iter()
+                .map(|(id, name)| PolicyNode {
+                    id: id.clone(),
+                    name: name.to_owned(),
+                    kind: PolicyCandidateKind::Node,
+                    provider: None,
+                    detail: "fixture".to_owned(),
+                    latency_ms: None,
+                    alive: None,
+                })
+                .collect(),
+            rules_total: 0,
+            rules: Vec::new(),
+        }])
+        .expect("manual policy catalog"),
+    );
+    app.workspace
+        .replace_source_selection(policy_id.clone(), Some(hk_id));
+    assert!(
+        app.catalog
+            .as_mut()
+            .expect("catalog")
+            .apply_selector_target("Proxy", "233boy-tcp-66.98.118.202")
+    );
+
+    assert_eq!(
+        app.catalog
+            .as_ref()
+            .map(|catalog| app.node_for_policy(catalog.select(Some(&policy_id))).name),
+        Some("233boy-tcp-66.98.118.202".to_owned())
+    );
+}
+
+#[test]
+fn refreshed_policy_snapshot_preserves_saved_node_selections() {
+    let mut app = ManisApp::with_fixture_controller("http://127.0.0.1:9090");
+    app.managed_policies
+        .node_selections
+        .set_policy_target("Proxy", "233boy-tcp-66.98.118.202")
+        .expect("set policy target");
+    let policy_id = PolicyGroupId::new("Proxy");
+    let snapshot_catalog = PolicyCatalog::try_new(vec![PolicyGroup {
+        id: policy_id.clone(),
+        name: "Proxy".to_owned(),
+        kind: PolicyGroupKind::Selector,
+        target: Some("HK 04".to_owned()),
+        nodes: ["HK 04", "233boy-tcp-66.98.118.202"]
+            .into_iter()
+            .map(|name| PolicyNode {
+                id: ProxyId::new(name),
+                name: name.to_owned(),
+                kind: PolicyCandidateKind::Node,
+                provider: None,
+                detail: "fixture".to_owned(),
+                latency_ms: None,
+                alive: None,
+            })
+            .collect(),
+        rules_total: 0,
+        rules: Vec::new(),
+    }])
+    .expect("snapshot catalog");
+
+    app.apply_refreshed_policy_snapshot(mihomo::LoadedSnapshot {
+        catalog: Some(snapshot_catalog),
+        providers: Vec::new(),
+        node_latency_records: std::collections::BTreeMap::new(),
+        version: "v1.19.22".to_owned(),
+        active_connections: 0,
+        download_total: 0,
+        upload_total: 0,
+        observed_routes: Vec::new(),
+        connections: Vec::new(),
+        runtime: manis_mihomo::RuntimeConfig::default(),
+    });
+
+    assert_eq!(
+        app.catalog
+            .as_ref()
+            .map(|catalog| app.node_for_policy(catalog.select(Some(&policy_id))).name),
+        Some("233boy-tcp-66.98.118.202".to_owned())
+    );
+    assert_eq!(
+        app.workspace.selection_for(&policy_id),
+        Some(&ProxyId::new("233boy-tcp-66.98.118.202"))
+    );
+}
+
+#[test]
 fn policy_expansion_survives_switching_between_saved_and_runtime_groups() {
     let mut app = ManisApp::with_fixture_controller("http://127.0.0.1:9090");
     let saved = ManagedPolicyGroup::new("group-deadbeef", "Hong Kong").expect("valid saved policy");

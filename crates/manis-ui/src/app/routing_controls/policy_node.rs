@@ -242,13 +242,14 @@ impl ManisApp {
                     .map(|node| (group.id.clone(), node.id.clone()))
             });
         let catalog_updated = self.update_catalog_selector_target(group_name, node_name, operation);
-        if catalog_updated && self.workspace.selected_group.as_ref() == Some(group_id) {
-            self.workspace.select_node(node_id.clone());
-        } else if catalog_updated
-            && let Some((catalog_group_id, catalog_node_id)) = catalog_selection
-            && self.workspace.selected_group.as_ref() == Some(&catalog_group_id)
-        {
-            self.workspace.select_node(catalog_node_id);
+        if catalog_updated {
+            if let Some((catalog_group_id, catalog_node_id)) = catalog_selection {
+                self.workspace
+                    .set_selection_for(catalog_group_id, catalog_node_id);
+            } else {
+                self.workspace
+                    .set_selection_for(group_id.clone(), node_id.clone());
+            }
         }
         record_operation(
             operation,
@@ -281,8 +282,23 @@ impl ManisApp {
                     .unwrap_or_else(|| node_name.clone());
                 let catalog_updated =
                     self.update_catalog_selector_target(&group_name, &current, operation);
-                if catalog_updated && self.workspace.selected_group.as_ref() == Some(&group_id) {
-                    self.workspace.select_node(node_id);
+                if catalog_updated {
+                    let synced = self
+                        .policy_groups()
+                        .find(|group| group.name == group_name)
+                        .and_then(|group| {
+                            group
+                                .nodes
+                                .iter()
+                                .find(|node| node.name == current)
+                                .map(|node| (group.id.clone(), node.id.clone()))
+                        });
+                    if let Some((catalog_group_id, catalog_node_id)) = synced {
+                        self.workspace
+                            .set_selection_for(catalog_group_id, catalog_node_id);
+                    } else {
+                        self.workspace.set_selection_for(group_id, node_id);
+                    }
                 }
                 if let Some(stored_group) = self
                     .managed_policies

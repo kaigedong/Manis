@@ -90,7 +90,7 @@ fn format_transfer_speed(bytes_per_second: u64) -> String {
     format!("{}/s", format_compact_size(bytes_per_second))
 }
 
-fn format_compact_size(bytes: u64) -> String {
+pub(crate) fn format_compact_size(bytes: u64) -> String {
     const KIB: u64 = 1024;
     const MIB: u64 = 1024 * 1024;
     const GIB: u64 = 1024 * 1024 * 1024;

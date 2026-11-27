@@ -440,21 +440,18 @@ impl ManisApp {
         &self,
         policy: &'a PolicyGroup,
     ) -> Option<&'a PolicyNode> {
+        let catalog_target = policy
+            .target
+            .as_deref()
+            .and_then(|target| policy.nodes.iter().find(|node| node.name == target));
         let selected = if policy.kind.allows_manual_selection() {
-            self.workspace
-                .selection_for(&policy.id)
-                .and_then(|selected| policy.nodes.iter().find(|node| node.id == *selected))
-                .or_else(|| {
-                    policy
-                        .target
-                        .as_deref()
-                        .and_then(|target| policy.nodes.iter().find(|node| node.name == target))
-                })
+            catalog_target.or_else(|| {
+                self.workspace
+                    .selection_for(&policy.id)
+                    .and_then(|selected| policy.nodes.iter().find(|node| node.id == *selected))
+            })
         } else {
-            policy
-                .target
-                .as_deref()
-                .and_then(|target| policy.nodes.iter().find(|node| node.name == target))
+            catalog_target
         };
         selected.or_else(|| policy.nodes.first())
     }

@@ -10,9 +10,9 @@ use super::{
 };
 use crate::{app_update::DownloadProgress, kernel::KernelRuntime};
 
-const DOWNLOAD_POLL_INTERVAL: Duration = Duration::from_millis(100);
+pub(super) const DOWNLOAD_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
-struct SharedDownloadProgress {
+pub(super) struct SharedDownloadProgress {
     downloaded_bytes: AtomicU64,
     total_bytes: AtomicU64,
     bytes_per_second: AtomicU64,
@@ -20,7 +20,7 @@ struct SharedDownloadProgress {
 }
 
 impl SharedDownloadProgress {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self {
             downloaded_bytes: AtomicU64::new(0),
             total_bytes: AtomicU64::new(0),
@@ -29,7 +29,7 @@ impl SharedDownloadProgress {
         }
     }
 
-    fn store(&self, progress: DownloadProgress) {
+    pub(super) fn store(&self, progress: DownloadProgress) {
         self.downloaded_bytes
             .store(progress.downloaded_bytes, Ordering::Relaxed);
         self.total_bytes
@@ -38,7 +38,7 @@ impl SharedDownloadProgress {
             .store(progress.bytes_per_second, Ordering::Relaxed);
     }
 
-    fn load(&self) -> DownloadProgress {
+    pub(super) fn load(&self) -> DownloadProgress {
         let total = self.total_bytes.load(Ordering::Relaxed);
         DownloadProgress {
             downloaded_bytes: self.downloaded_bytes.load(Ordering::Relaxed),
@@ -47,11 +47,11 @@ impl SharedDownloadProgress {
         }
     }
 
-    fn mark_finished(&self) {
+    pub(super) fn mark_finished(&self) {
         self.finished.store(true, Ordering::Release);
     }
 
-    fn is_finished(&self) -> bool {
+    pub(super) fn is_finished(&self) -> bool {
         self.finished.load(Ordering::Acquire)
     }
 }
@@ -86,11 +86,13 @@ pub(in crate::app) enum AppUpdateState {
     InstallFailed(String),
 }
 
-pub(super) fn perform_mihomo_core_update(
+pub(super) fn install_downloaded_mihomo_core(
     previous: &KernelRuntime,
     store_dir: &std::path::Path,
     language: Language,
     reconnect: bool,
+    asset: &core_update::ReleaseAsset,
+    package: &[u8],
 ) -> MihomoCoreUpdateOutcome {
     if let Err(message) = previous.stop_managed() {
         return MihomoCoreUpdateOutcome::Failed {
@@ -100,7 +102,7 @@ pub(super) fn perform_mihomo_core_update(
     }
 
     let mut prepared = None;
-    let install = core_update::install_latest_core_update(|| {
+    let install = core_update::install_downloaded_core_package(asset, package, || {
         let runtime = KernelRuntime::prepare_with_language(Some(store_dir));
         let snapshot = reconnect
             .then(|| runtime.connect())
@@ -136,16 +138,72 @@ pub(super) fn perform_mihomo_core_update(
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub(in crate::app) enum MihomoCoreUpdateState {
+pub(in crate::app) enum MihomoCoreUpdatePhase {
     #[default]
-    Missing,
-    Ready(String),
-    Updating,
+    Idle,
+    Checking,
+    Current {
+        latest_version: String,
+    },
+    Available(core_update::ReleaseAsset),
+    Downloading {
+        version: Option<String>,
+        progress: DownloadProgress,
+    },
+    ReadyToInstall {
+        asset: core_update::ReleaseAsset,
+        package: Arc<Vec<u8>>,
+    },
+    Installing {
+        version: String,
+    },
+    Updated {
+        version: String,
+    },
+    Failed(String),
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(in crate::app) struct MihomoCoreUpdateState {
+    pub(in crate::app) installed_version: Option<String>,
+    pub(in crate::app) phase: MihomoCoreUpdatePhase,
 }
 
 impl MihomoCoreUpdateState {
+    pub(in crate::app) const fn is_installed(&self) -> bool {
+        self.installed_version.is_some()
+    }
+
+    pub(in crate::app) fn current_version(&self) -> Option<&str> {
+        self.installed_version
+            .as_deref()
+            .filter(|version| !version.is_empty())
+    }
+
+    pub(in crate::app) const fn is_checking(&self) -> bool {
+        matches!(self.phase, MihomoCoreUpdatePhase::Checking)
+    }
+
     pub(in crate::app) const fn is_busy(&self) -> bool {
-        matches!(self, Self::Updating)
+        matches!(
+            self.phase,
+            MihomoCoreUpdatePhase::Downloading { .. } | MihomoCoreUpdatePhase::Installing { .. }
+        )
+    }
+
+    pub(in crate::app) fn available_version(&self) -> Option<&str> {
+        match &self.phase {
+            MihomoCoreUpdatePhase::Available(asset)
+            | MihomoCoreUpdatePhase::ReadyToInstall { asset, .. } => Some(asset.version.as_str()),
+            _ => None,
+        }
+    }
+
+    pub(in crate::app) fn record_installed_version(&mut self, version: &str) {
+        let normalized = core_update::normalize_core_version(version);
+        if !normalized.is_empty() {
+            self.installed_version = Some(normalized);
+        }
     }
 }
 
@@ -153,14 +211,17 @@ impl ManisApp {
     pub(in crate::app) fn initial_mihomo_core_update_state() -> MihomoCoreUpdateState {
         #[cfg(test)]
         {
-            MihomoCoreUpdateState::Missing
+            MihomoCoreUpdateState::default()
         }
         #[cfg(not(test))]
         {
-            core_update::managed_core_binary_path()
-                .map_or(MihomoCoreUpdateState::Missing, |_path| {
-                    MihomoCoreUpdateState::Ready(String::new())
-                })
+            let installed_version = core_update::managed_core_binary_path()
+                .ok()
+                .map(|_path| String::new());
+            MihomoCoreUpdateState {
+                installed_version,
+                phase: MihomoCoreUpdatePhase::Idle,
+            }
         }
     }
 

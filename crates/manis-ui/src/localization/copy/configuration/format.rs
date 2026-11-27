@@ -273,13 +273,6 @@ pub(crate) fn updated_days_ago(language: Language, days: u64) -> String {
     }
 }
 
-pub(crate) fn managed_core_version(language: Language, version: &str) -> String {
-    match language {
-        Language::English => format!("Manis-managed stable core · {version}"),
-        Language::SimplifiedChinese => format!("Manis 托管稳定版内核 · {version}"),
-    }
-}
-
 pub(crate) fn single_node_saved(language: Language, suffix: &str) -> String {
     match language {
         Language::English => format!("Single-node source saved · Added to Saved group{suffix}"),

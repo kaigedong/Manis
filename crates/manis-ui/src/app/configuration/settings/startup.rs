@@ -5,8 +5,8 @@ use gpui::{
 use gpui_component::IconName;
 
 use super::{
-    ManisApp, MihomoCoreUpdateState, Theme, copy, settings_group_card, settings_inset_divider,
-    settings_row, settings_section_header,
+    ManisApp, Theme, copy, settings_group_card, settings_inset_divider, settings_row,
+    settings_section_header,
 };
 use crate::auto_connect;
 use crate::autostart;
@@ -109,10 +109,7 @@ impl ManisApp {
                 if enabled {
                     // Turning the setting on should not require a restart to take effect.
                     self.maybe_auto_connect(cx);
-                    if matches!(
-                        self.mihomo_core_update_state,
-                        MihomoCoreUpdateState::Missing
-                    ) {
+                    if !self.mihomo_core_update_state.is_installed() {
                         // A previous launch may have failed to install the core; retry it now.
                         self.update_mihomo_core(cx);
                     }

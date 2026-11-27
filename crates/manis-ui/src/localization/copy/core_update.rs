@@ -1,4 +1,85 @@
-use crate::localization::LocalizedText;
+use crate::{
+    app_update::DownloadProgress,
+    localization::{Language, LocalizedText, copy},
+};
+
+pub(crate) const MANAGED_STABLE_CORE: LocalizedText =
+    LocalizedText::new("Manis-managed stable core", "Manis 托管稳定版内核");
+pub(crate) const NOT_INSTALLED_HINT: LocalizedText = LocalizedText::new(
+    "Core not installed; download the stable release",
+    "尚未安装内核，请下载稳定版",
+);
+pub(crate) const CHECKING: LocalizedText =
+    LocalizedText::new("Checking for updates…", "正在检查新版本…");
+pub(crate) const UP_TO_DATE: LocalizedText =
+    LocalizedText::new("Mihomo is up to date", "Mihomo 已是最新版本");
+pub(crate) const FETCHING_RELEASE: LocalizedText =
+    LocalizedText::new("Fetching latest stable release…", "正在获取最新稳定版信息…");
+pub(crate) const UPDATE_ACTION: LocalizedText = LocalizedText::new("Update", "更新");
+pub(crate) const DOWNLOAD_STABLE: LocalizedText =
+    LocalizedText::new("Download stable", "下载稳定版");
+pub(crate) const INSTALL_ACTION: LocalizedText = LocalizedText::new("Install update", "安装更新");
+pub(crate) const INSTALLING_BUTTON: LocalizedText = LocalizedText::new("Installing…", "安装中…");
+pub(crate) const CHECK_ACCESSIBILITY_LABEL: LocalizedText =
+    LocalizedText::new("Check for Mihomo core updates", "检查 Mihomo 内核更新");
+
+pub(crate) fn available_version(language: Language, version: &str) -> String {
+    match language {
+        Language::English => format!("Version {version} is ready to update"),
+        Language::SimplifiedChinese => format!("发现新版本 {version}，可直接更新"),
+    }
+}
+
+pub(crate) fn downloading_status(
+    language: Language,
+    version: Option<&str>,
+    progress: DownloadProgress,
+) -> String {
+    let Some(version) = version else {
+        return language.localized(FETCHING_RELEASE).to_owned();
+    };
+    if let Some(total) = progress.total_bytes.filter(|total| *total > 0)
+        && progress.downloaded_bytes > 0
+    {
+        let downloaded = copy::app_update::format_compact_size(progress.downloaded_bytes);
+        let total = copy::app_update::format_compact_size(total);
+        return match language {
+            Language::English => format!("Downloading {version} ({downloaded} / {total})"),
+            Language::SimplifiedChinese => format!("正在下载 {version}（{downloaded} / {total}）"),
+        };
+    }
+    match language {
+        Language::English => format!("Downloading Mihomo {version}…"),
+        Language::SimplifiedChinese => format!("正在下载新版本 {version}…"),
+    }
+}
+
+pub(crate) fn ready_to_install(language: Language, version: &str, proxy_active: bool) -> String {
+    match (language, proxy_active) {
+        (Language::English, false) => format!("Version {version} is downloaded; ready to install"),
+        (Language::SimplifiedChinese, false) => format!("新版本 {version} 已下载，点击即可安装"),
+        (Language::English, true) => {
+            format!("Version {version} is downloaded; pause proxy to install")
+        }
+        (Language::SimplifiedChinese, true) => {
+            format!("新版本 {version} 已下载，暂停代理后即可安装")
+        }
+    }
+}
+
+pub(crate) fn installing_version(language: Language, version: &str) -> String {
+    match language {
+        Language::English => format!("Verifying and installing {version}…"),
+        Language::SimplifiedChinese => format!("正在校验并安装 {version}…"),
+    }
+}
+
+pub(crate) fn updated_version(language: Language, version: &str) -> String {
+    match language {
+        Language::English => format!("Updated to {version}"),
+        Language::SimplifiedChinese => format!("已更新至 {version}"),
+    }
+}
 
 pub(crate) const UNSUPPORTED_PLATFORM: LocalizedText = LocalizedText::new(
     "Automatic Mihomo core updates are unavailable on this platform",

@@ -1,12 +1,15 @@
+use std::sync::Arc;
 use std::time::Duration;
 
+use super::update::DOWNLOAD_POLL_INTERVAL;
 use super::{
     Context, ControllerRuntime, ControllerState, LiveStreamPhase, LiveStreamStatus, LoadedSnapshot,
-    LogLevel, ManagedPolicyRuntimeState, ManisApp, MihomoCoreUpdateOutcome, MihomoCoreUpdateState,
-    ProxyMode, UiEvent, begin_operation, copy, core_update, mihomo, perform_mihomo_core_update,
-    record_event, record_operation, trace_ui,
+    LogLevel, ManagedPolicyRuntimeState, ManisApp, MihomoCoreUpdateOutcome, MihomoCoreUpdatePhase,
+    ProxyMode, SharedDownloadProgress, UiEvent, begin_operation, copy, core_update,
+    install_downloaded_mihomo_core, mihomo, record_event, record_operation, trace_ui,
 };
 use crate::app::AutoConnectStage;
+use crate::app_update::DownloadProgress;
 use crate::mihomo::RuntimeProfileSource;
 
 /// One automatic retry covers a login-time start that raced the network coming up.
@@ -75,13 +78,7 @@ impl ManisApp {
         } else {
             AutoConnectGate::Ready
         };
-        let decision = auto_connect_decision(
-            gate,
-            matches!(
-                self.mihomo_core_update_state,
-                MihomoCoreUpdateState::Ready(_)
-            ),
-        );
+        let decision = auto_connect_decision(gate, self.mihomo_core_update_state.is_installed());
         match decision {
             AutoConnectDecision::Skip => {}
             AutoConnectDecision::WaitForCore => {
@@ -139,20 +136,314 @@ impl ManisApp {
         cx.notify();
     }
 
+    #[cfg(not(test))]
+    pub(in crate::app) fn probe_mihomo_core_version(&mut self, cx: &mut Context<Self>) {
+        if self.runtime.is_fixture()
+            || !self.mihomo_core_update_state.is_installed()
+            || self.mihomo_core_update_state.current_version().is_some()
+        {
+            return;
+        }
+        let executor = cx.background_executor().clone();
+        cx.spawn(async move |this, cx| {
+            let version = executor
+                .spawn(async { core_update::probe_installed_core_version() })
+                .await;
+            if let Some(version) = version {
+                this.update(cx, |this, cx| {
+                    if this.mihomo_core_update_state.is_installed() {
+                        this.mihomo_core_update_state
+                            .record_installed_version(&version);
+                        cx.notify();
+                    }
+                })
+                .ok();
+            }
+        })
+        .detach();
+    }
+
+    /// Automatically checks for a newer Mihomo release once when entering Runtime settings.
+    pub(in crate::app) fn maybe_auto_check_mihomo_core_update(&mut self, cx: &mut Context<Self>) {
+        if self.mihomo_core_update_state.is_installed()
+            && matches!(
+                self.mihomo_core_update_state.phase,
+                MihomoCoreUpdatePhase::Idle
+            )
+        {
+            self.check_for_mihomo_core_update(cx);
+        }
+    }
+
+    pub(in crate::app) fn check_for_mihomo_core_update(&mut self, cx: &mut Context<Self>) {
+        if self.runtime.is_fixture()
+            || self.mihomo_core_update_state.is_checking()
+            || self.mihomo_core_update_state.is_busy()
+        {
+            return;
+        }
+        let previous = std::mem::replace(
+            &mut self.mihomo_core_update_state.phase,
+            MihomoCoreUpdatePhase::Checking,
+        );
+        let known_version = self
+            .mihomo_core_update_state
+            .current_version()
+            .map(str::to_owned);
+        let is_installed = self.mihomo_core_update_state.is_installed();
+        cx.notify();
+
+        let executor = cx.background_executor().clone();
+        cx.spawn(async move |this, cx| {
+            let (probed, checked) = executor
+                .spawn(async move {
+                    let probed = if known_version.is_none() && is_installed {
+                        core_update::probe_installed_core_version()
+                    } else {
+                        None
+                    };
+                    let effective_current = known_version.or_else(|| probed.clone());
+                    let checked = core_update::check_for_core_update(effective_current.as_deref());
+                    (probed, checked)
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                if let Some(version) = probed
+                    && this.mihomo_core_update_state.is_installed()
+                {
+                    this.mihomo_core_update_state
+                        .record_installed_version(&version);
+                }
+                this.finish_mihomo_core_update_check(checked, previous);
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    pub(in crate::app) fn finish_mihomo_core_update_check(
+        &mut self,
+        result: Result<core_update::CoreUpdateCheck, core_update::CoreUpdateError>,
+        previous: MihomoCoreUpdatePhase,
+    ) {
+        self.mihomo_core_update_state.phase = match result {
+            Ok(core_update::CoreUpdateCheck::Available(asset)) => match previous {
+                MihomoCoreUpdatePhase::ReadyToInstall {
+                    asset: ready,
+                    package,
+                } if ready.version == asset.version => MihomoCoreUpdatePhase::ReadyToInstall {
+                    asset: ready,
+                    package,
+                },
+                other => {
+                    if !matches!(&other, MihomoCoreUpdatePhase::Available(known) if known.version == asset.version)
+                    {
+                        record_event(
+                            LogLevel::Info,
+                            "core.update.available",
+                            format!("version={}", asset.version),
+                        );
+                    }
+                    MihomoCoreUpdatePhase::Available(asset)
+                }
+            },
+            Ok(core_update::CoreUpdateCheck::Current { version }) => {
+                MihomoCoreUpdatePhase::Current {
+                    latest_version: version,
+                }
+            }
+            Err(error) => {
+                record_event(
+                    LogLevel::Warn,
+                    "core.update.check.failed",
+                    error.to_string(),
+                );
+                match previous {
+                    MihomoCoreUpdatePhase::Available(_)
+                    | MihomoCoreUpdatePhase::ReadyToInstall { .. } => previous,
+                    _ => MihomoCoreUpdatePhase::Failed(
+                        error.localized_message(self.language()).to_owned(),
+                    ),
+                }
+            }
+        };
+    }
+
     pub(in crate::app) fn update_mihomo_core(&mut self, cx: &mut Context<Self>) {
-        if self.configuration_transfer.active {
+        if self.configuration_transfer.active || self.mihomo_core_update_state.is_busy() {
             return;
         }
-        if self.mihomo_core_update_state.is_busy() {
-            return;
-        }
-        if self.proxy_mode != ProxyMode::Off {
+        if self.subscription_store_dir.is_none() {
             self.language()
-                .localized(copy::app::TURN_OFF_THE_ACTIVE_PROXY_MODE_BEFORE_UPDATING_MIHOMO)
+                .localized(
+                    copy::app::THE_MANIS_DATA_DIRECTORY_IS_UNAVAILABLE_MIHOMO_CANNOT_BE_UPDATED,
+                )
                 .clone_into(&mut self.status);
             cx.notify();
             return;
         }
+
+        if let MihomoCoreUpdatePhase::ReadyToInstall { asset, package } =
+            self.mihomo_core_update_state.phase.clone()
+        {
+            if self.proxy_mode != ProxyMode::Off {
+                self.language()
+                    .localized(copy::app::TURN_OFF_THE_ACTIVE_PROXY_MODE_BEFORE_UPDATING_MIHOMO)
+                    .clone_into(&mut self.status);
+                cx.notify();
+                return;
+            }
+            self.install_staged_mihomo_core(asset, package, cx);
+            return;
+        }
+
+        let known_asset = match self.mihomo_core_update_state.phase.clone() {
+            MihomoCoreUpdatePhase::Available(asset) => Some(asset),
+            _ => None,
+        };
+        self.start_mihomo_core_download(known_asset, cx);
+    }
+
+    fn start_mihomo_core_download(
+        &mut self,
+        known_asset: Option<core_update::ReleaseAsset>,
+        cx: &mut Context<Self>,
+    ) {
+        let language = self.language();
+        self.mihomo_core_update_state.phase = MihomoCoreUpdatePhase::Downloading {
+            version: known_asset.as_ref().map(|asset| asset.version.clone()),
+            progress: DownloadProgress::default(),
+        };
+        language
+            .localized(copy::app::DOWNLOADING_AND_VERIFYING_THE_STABLE_MIHOMO_RELEASE)
+            .clone_into(&mut self.status);
+        cx.notify();
+
+        let executor = cx.background_executor().clone();
+        let timer = executor.clone();
+        cx.spawn(async move |this, cx| {
+            let asset = match known_asset {
+                Some(asset) => asset,
+                None => match executor
+                    .spawn(async { core_update::fetch_current_release_asset() })
+                    .await
+                {
+                    Ok(asset) => {
+                        let version = asset.version.clone();
+                        let _ = this.update(cx, |this, cx| {
+                            if let MihomoCoreUpdatePhase::Downloading { version: slot, .. } =
+                                &mut this.mihomo_core_update_state.phase
+                            {
+                                *slot = Some(version);
+                                cx.notify();
+                            }
+                        });
+                        asset
+                    }
+                    Err(error) => {
+                        record_event(
+                            LogLevel::Error,
+                            "core.update.fetch.failed",
+                            error.to_string(),
+                        );
+                        let message = error.localized_message(language).to_owned();
+                        this.update(cx, |this, cx| {
+                            this.mihomo_core_update_state.phase =
+                                MihomoCoreUpdatePhase::Failed(message.clone());
+                            this.status = message;
+                            cx.notify();
+                        })
+                        .ok();
+                        return;
+                    }
+                },
+            };
+
+            let shared = Arc::new(SharedDownloadProgress::new());
+            let progress_writer = Arc::clone(&shared);
+            let download_asset = asset.clone();
+            let download_task = executor.spawn(async move {
+                let result = core_update::download_asset_package_with_progress(
+                    &download_asset,
+                    |progress| progress_writer.store(progress),
+                );
+                progress_writer.mark_finished();
+                result
+            });
+
+            let mut last_seen = DownloadProgress::default();
+            while !shared.is_finished() {
+                timer.timer(DOWNLOAD_POLL_INTERVAL).await;
+                let latest = shared.load();
+                if latest != last_seen {
+                    last_seen = latest;
+                    let still_alive = this
+                        .update(cx, |this, cx| {
+                            if let MihomoCoreUpdatePhase::Downloading { progress, .. } =
+                                &mut this.mihomo_core_update_state.phase
+                            {
+                                *progress = latest;
+                                cx.notify();
+                            }
+                        })
+                        .is_ok();
+                    if !still_alive {
+                        break;
+                    }
+                }
+            }
+
+            let downloaded = download_task.await;
+            this.update(cx, |this, cx| {
+                this.finish_mihomo_core_download(asset, downloaded, cx);
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn finish_mihomo_core_download(
+        &mut self,
+        asset: core_update::ReleaseAsset,
+        result: Result<Vec<u8>, core_update::CoreUpdateError>,
+        cx: &mut Context<Self>,
+    ) {
+        let language = self.language();
+        match result {
+            Ok(bytes) => {
+                let package = Arc::new(bytes);
+                if self.proxy_mode == ProxyMode::Off && !self.configuration_transfer.active {
+                    self.install_staged_mihomo_core(asset, package, cx);
+                } else {
+                    let version = asset.version.clone();
+                    self.mihomo_core_update_state.phase =
+                        MihomoCoreUpdatePhase::ReadyToInstall { asset, package };
+                    self.status = copy::core_update::ready_to_install(language, &version, true);
+                    cx.notify();
+                }
+            }
+            Err(error) => {
+                record_event(
+                    LogLevel::Error,
+                    "core.update.download.failed",
+                    error.to_string(),
+                );
+                let message = error.localized_message(language).to_owned();
+                self.mihomo_core_update_state.phase =
+                    MihomoCoreUpdatePhase::Failed(message.clone());
+                self.status = message;
+                cx.notify();
+            }
+        }
+    }
+
+    fn install_staged_mihomo_core(
+        &mut self,
+        asset: core_update::ReleaseAsset,
+        package: Arc<Vec<u8>>,
+        cx: &mut Context<Self>,
+    ) {
         let Some(store_dir) = self.subscription_store_dir.clone() else {
             self.language()
                 .localized(
@@ -162,23 +453,24 @@ impl ManisApp {
             cx.notify();
             return;
         };
-
         let language = self.language();
         let reconnect = matches!(self.controller, ControllerState::Connected { .. });
         let previous = self.runtime.clone();
-        self.mihomo_core_update_state = MihomoCoreUpdateState::Updating;
+        self.mihomo_core_update_state.phase = MihomoCoreUpdatePhase::Installing {
+            version: asset.version.clone(),
+        };
         self.live_generation = self.live_generation.wrapping_add(1);
         self.live_runtime = None;
         self.controller = ControllerState::Disconnected;
-        language
-            .localized(copy::app::DOWNLOADING_AND_VERIFYING_THE_STABLE_MIHOMO_RELEASE)
-            .clone_into(&mut self.status);
+        self.status = copy::core_update::installing_version(language, &asset.version);
 
         let executor = cx.background_executor().clone();
         cx.spawn(async move |this, cx| {
             let outcome = executor
                 .spawn(async move {
-                    perform_mihomo_core_update(&previous, &store_dir, language, reconnect)
+                    install_downloaded_mihomo_core(
+                        &previous, &store_dir, language, reconnect, &asset, &package,
+                    )
                 })
                 .await;
             this.update(cx, |this, cx| {
@@ -203,15 +495,22 @@ impl ManisApp {
                 snapshot,
             } => {
                 self.runtime = runtime;
-                self.mihomo_core_update_state = MihomoCoreUpdateState::Ready(version.clone());
+                self.mihomo_core_update_state
+                    .record_installed_version(&version);
+                self.mihomo_core_update_state.phase = MihomoCoreUpdatePhase::Updated {
+                    version: version.clone(),
+                };
                 self.apply_core_update_snapshot(snapshot, cx);
                 self.status = copy::app::mihomo_installed(language, &version);
             }
             MihomoCoreUpdateOutcome::Failed { message, recovered } => {
-                self.mihomo_core_update_state = core_update::managed_core_binary_path()
-                    .map_or(MihomoCoreUpdateState::Missing, |_path| {
-                        MihomoCoreUpdateState::Ready(String::new())
-                    });
+                if core_update::managed_core_binary_path().is_err() {
+                    self.mihomo_core_update_state.installed_version = None;
+                } else if self.mihomo_core_update_state.installed_version.is_none() {
+                    self.mihomo_core_update_state.installed_version = Some(String::new());
+                }
+                self.mihomo_core_update_state.phase =
+                    MihomoCoreUpdatePhase::Failed(message.clone());
                 self.apply_core_update_snapshot(recovered, cx);
                 self.status = format!(
                     "{}{message}",
@@ -414,6 +713,10 @@ impl ManisApp {
             policy_group_count,
             snapshot.active_connections,
         );
+        if self.mihomo_core_update_state.is_installed() && !snapshot.version.trim().is_empty() {
+            self.mihomo_core_update_state
+                .record_installed_version(&snapshot.version);
+        }
         self.controller = ControllerState::Connected {
             endpoint,
             version: snapshot.version,
@@ -446,6 +749,9 @@ impl ManisApp {
             self.source_providers = providers;
             return;
         };
+        for (group, target) in self.managed_policies.node_selections.iter_policy_targets() {
+            let _ = catalog.apply_selector_target(group, target);
+        }
         self.apply_completed_policy_benchmarks(&mut catalog);
         let selected_group = catalog.select(self.workspace.selected_group.as_ref());
         let selected_node = selected_group
@@ -459,6 +765,24 @@ impl ManisApp {
         self.source_providers = providers;
         self.workspace
             .replace_source_selection(selected_group_id, selected_node);
+    }
+
+    fn sync_catalog_and_workspace_target(&mut self, group: &str, current: &str) {
+        if let Some(catalog) = self.catalog.as_mut()
+            && catalog.apply_selector_target(group, current)
+            && let Some((group_id, node_id)) = catalog
+                .iter()
+                .find(|candidate| candidate.name == group)
+                .and_then(|candidate| {
+                    candidate
+                        .nodes
+                        .iter()
+                        .find(|node| node.name == current)
+                        .map(|node| (candidate.id.clone(), node.id.clone()))
+                })
+        {
+            self.workspace.set_selection_for(group_id, node_id);
+        }
     }
 
     pub(in crate::app) fn sync_saved_node_selections(&mut self, cx: &mut Context<Self>) {
@@ -512,9 +836,7 @@ impl ManisApp {
                     match result {
                         Ok(snapshot) => {
                             let current = snapshot.current.as_deref().unwrap_or(&requested);
-                            if let Some(catalog) = this.catalog.as_mut() {
-                                let _ = catalog.apply_selector_target(&group, current);
-                            }
+                            this.sync_catalog_and_workspace_target(&group, current);
                             if let Some(stored_group) = this
                                 .managed_policies
                                 .groups

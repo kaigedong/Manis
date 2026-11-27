@@ -140,3 +140,38 @@ fn node_selection_preferences_reject_group_readable_files() -> Result<(), Box<dy
     fs::remove_dir_all(root)?;
     Ok(())
 }
+
+#[cfg(not(windows))]
+#[test]
+fn node_selection_preferences_updates_existing_config_toml_without_loose_file()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = test_temp_dir("manis-node-selection-update");
+    let store = root.join("subscriptions");
+
+    let mut initial = super::NodeSelectionPreferences::default();
+    initial.set_policy_target("🤖 AI Platforms", "Proxy")?;
+    super::save_node_selection_preferences_in(&store, &initial)?;
+    assert_eq!(
+        super::load_node_selection_preferences_in(&store)?.policy_target("🤖 AI Platforms"),
+        Some("Proxy")
+    );
+    assert!(store.join("config.toml").is_file());
+
+    // Saving again after config.toml exists must update config.toml instead of
+    // writing an ignored loose node-selection.state file.
+    let mut updated = initial;
+    updated.set_policy_target("🤖 AI Platforms", "233boy-tcp-66.98.118.202")?;
+    super::save_node_selection_preferences_in(&store, &updated)?;
+
+    assert!(
+        !store.join(super::NODE_SELECTION_PREFERENCES_FILE).exists(),
+        "must not write a loose node-selection.state alongside config.toml"
+    );
+    assert_eq!(
+        super::load_node_selection_preferences_in(&store)?.policy_target("🤖 AI Platforms"),
+        Some("233boy-tcp-66.98.118.202")
+    );
+
+    fs::remove_dir_all(root)?;
+    Ok(())
+}

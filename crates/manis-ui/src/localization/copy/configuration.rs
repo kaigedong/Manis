@@ -53,8 +53,6 @@ pub(crate) const CHANGE_TARGET_POLICY_FOR_THIS_RULE_SOURCE: LocalizedText = Loca
     "Change target policy for this rule source",
     "修改这个规则源的目标策略",
 );
-pub(crate) const CHECK_FOR_UPDATE: LocalizedText =
-    LocalizedText::new("Check for update", "检查更新");
 pub(crate) const CHOOSE_AN_EXISTING_POLICY_GROUP: LocalizedText =
     LocalizedText::new("Choose an existing policy group", "请选择已有策略组");
 pub(crate) const CHOOSE_CONDITION_TYPE: LocalizedText =
@@ -101,8 +99,6 @@ pub(crate) const DOWNLOAD_OR_UPDATE_THE_MANIS_MANAGED_MIHOMO_CORE: LocalizedText
         "Download or update the Manis-managed Mihomo core",
         "下载或更新 Manis 托管的 Mihomo 内核",
     );
-pub(crate) const DOWNLOAD_STABLE: LocalizedText =
-    LocalizedText::new("Download stable", "下载稳定版");
 pub(crate) const EDIT_PROXY_SOURCE: LocalizedText =
     LocalizedText::new("Edit proxy source", "编辑代理来源");
 pub(crate) const EDIT_ROUTING_RULE: LocalizedText =
@@ -316,7 +312,6 @@ pub(crate) const RULE_SOURCE_POLICY_SET_TO: LocalizedText =
     LocalizedText::new("Rule source policy set to", "规则源策略已设为");
 pub(crate) const RULE_URL: LocalizedText = LocalizedText::new("Rule URL", "规则 URL");
 pub(crate) const RUNTIME: LocalizedText = LocalizedText::new("Runtime", "运行内核");
-pub(crate) const RUNTIME_KERNEL: LocalizedText = LocalizedText::new("Runtime kernel", "运行内核");
 pub(crate) const SAVING: LocalizedText = LocalizedText::new("Saving…", "保存中…");
 pub(crate) const SAVING_RULE_SOURCE_POLICY: LocalizedText =
     LocalizedText::new("Saving rule source policy", "正在保存规则源策略");

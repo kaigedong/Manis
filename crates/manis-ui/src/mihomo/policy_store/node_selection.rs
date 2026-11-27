@@ -5,7 +5,7 @@ use super::super::{
     decode_hex, encode_hex, storage_version_supported,
 };
 #[cfg(not(windows))]
-use super::super::{require_clean_absolute_store, write_private_atomic};
+use super::{require_clean_absolute_store, write_private_atomic};
 
 fn encode_node_selection_preferences(
     preferences: &NodeSelectionPreferences,

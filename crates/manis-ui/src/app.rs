@@ -74,7 +74,7 @@ use routing_apply::{
     mutate_saved_sources,
 };
 use runtime_lifecycle::LifecycleSubscriptions;
-use runtime_lifecycle::{AppUpdateState, MihomoCoreUpdateState};
+use runtime_lifecycle::{AppUpdateState, MihomoCoreUpdatePhase, MihomoCoreUpdateState};
 use stored_workspace::StoredWorkspace;
 use subscription_workflow::{
     DueRemoteSource, ImportedSubscription, ImportedSubscriptionState, SourceLoadOutcome,
@@ -281,7 +281,10 @@ impl ManisApp {
         app.restore_imported_subscriptions(cx);
         #[cfg(not(test))]
         app.sync_launch_at_login();
-        if matches!(app.mihomo_core_update_state, MihomoCoreUpdateState::Missing) {
+        if app.mihomo_core_update_state.is_installed() {
+            #[cfg(not(test))]
+            app.probe_mihomo_core_version(cx);
+        } else {
             app.update_mihomo_core(cx);
         }
         app.maybe_auto_connect(cx);

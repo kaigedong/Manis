@@ -30,7 +30,7 @@ mod release;
 mod version_probe;
 
 use archive::{parse_sha256_digest, unpack_core_binary, verify_asset_digest};
-use download::{download_bytes, download_text};
+use download::{download_bytes_with_progress, download_text};
 #[cfg(target_os = "linux")]
 pub(crate) use install::bundled_seed_path;
 #[cfg(not(test))]
@@ -42,13 +42,17 @@ use install::{
 };
 #[cfg(all(test, unix))]
 use install::{install_asset_package, require_managed_core_file};
-pub(crate) use install::{install_latest_core_update, managed_core_binary_path};
+pub(crate) use install::{
+    install_downloaded_core_package, managed_core_binary_path, probe_installed_core_version,
+};
 use install::{remove_file_if_exists, unique_sibling_path, zip_entry_is_mihomo_binary};
 #[cfg(test)]
 use release::select_release_asset;
-pub(crate) use release::{InstalledCore, SeedInstallOutcome};
-use release::{download_asset_package, fetch_current_release_asset};
-use version_probe::validate_binary_version;
+pub(crate) use release::{
+    CoreUpdateCheck, InstalledCore, SeedInstallOutcome, check_for_core_update,
+    download_asset_package_with_progress, fetch_current_release_asset, normalize_core_version,
+};
+use version_probe::{reported_binary_version_with_timeout, validate_binary_version};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Platform {
@@ -71,6 +75,7 @@ pub(crate) struct ReleaseAsset {
     pub(crate) download_url: String,
     pub(crate) archive: ArchiveKind,
     pub(crate) sha256: String,
+    pub(crate) size: Option<u64>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -216,7 +221,8 @@ impl Platform {
 
 #[cfg(test)]
 mod tests {
-    use super::download::enforce_body_limit;
+    use super::download::{enforce_body_limit, read_bytes_stream};
+    use super::release::is_newer_core_version;
     use super::version_probe::parse_reported_version;
     #[cfg(unix)]
     use super::version_probe::reported_binary_version_with_timeout;
@@ -370,6 +376,7 @@ mod tests {
             download_url: "https://example.test/darwin.gz".to_string(),
             archive: ArchiveKind::Gzip,
             sha256: "6cbac7deb54ff07ea9f5220277632d66b740cc1c04e44b485471aad82aa51042".to_string(),
+            size: Some(package.len() as u64),
         };
 
         assert_eq!(verify_asset_digest(&asset, package), Ok(()));
@@ -390,6 +397,42 @@ mod tests {
             Err(CoreUpdateError::PackageTooLarge)
         );
         assert_eq!(enforce_body_limit(vec![7_u8; 4], 4), Ok(vec![7_u8; 4]));
+    }
+
+    #[test]
+    fn compares_core_versions_semantically() {
+        assert!(is_newer_core_version(None, "v1.19.30"));
+        assert!(is_newer_core_version(Some(""), "v1.19.30"));
+        assert!(is_newer_core_version(Some("v1.19.22"), "v1.19.30"));
+        assert!(is_newer_core_version(Some("1.19.9"), "v1.19.10"));
+        assert!(!is_newer_core_version(Some("v1.19.30"), "v1.19.30"));
+        assert!(!is_newer_core_version(Some("1.19.30"), "v1.19.22"));
+        assert_eq!(normalize_core_version("1.19.22"), "v1.19.22");
+        assert_eq!(normalize_core_version("v1.19.22"), "v1.19.22");
+    }
+
+    #[test]
+    fn stream_download_reports_progress_and_enforces_limit() {
+        let payload = vec![42_u8; 4096];
+        let mut cursor = Cursor::new(payload.clone());
+        let mut updates = Vec::new();
+
+        let bytes = read_bytes_stream(&mut cursor, Some(payload.len() as u64), 8192, |progress| {
+            updates.push(progress);
+        })
+        .expect("stream download");
+
+        assert_eq!(bytes, payload);
+        assert!(updates.len() >= 2);
+        assert_eq!(updates.first().map(|p| p.downloaded_bytes), Some(0));
+        assert_eq!(updates.last().map(|p| p.downloaded_bytes), Some(4096));
+        assert_eq!(updates.last().and_then(|p| p.percent()), Some(100));
+
+        let mut oversized = Cursor::new(vec![1_u8; 32]);
+        assert_eq!(
+            read_bytes_stream(&mut oversized, None, 16, |_| {}),
+            Err(CoreUpdateError::PackageTooLarge)
+        );
     }
 
     #[test]
@@ -557,6 +600,7 @@ mod tests {
             download_url: "https://example.test/darwin.gz".to_string(),
             archive: ArchiveKind::Gzip,
             sha256: sha256_hex(&package),
+            size: Some(package.len() as u64),
         };
 
         let installed =

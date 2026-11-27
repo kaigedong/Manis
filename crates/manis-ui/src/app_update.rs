@@ -446,7 +446,7 @@ fn read_package_stream(
     Ok(bytes)
 }
 
-fn compute_transfer_speed(
+pub(crate) fn compute_transfer_speed(
     downloaded_bytes: u64,
     last_sample_bytes: u64,
     window_elapsed: Duration,

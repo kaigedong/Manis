@@ -24,5 +24,7 @@ mod model;
 mod update;
 pub(super) use model::LifecycleSubscriptions;
 
-use update::perform_mihomo_core_update;
-pub(super) use update::{AppUpdateState, MihomoCoreUpdateOutcome, MihomoCoreUpdateState};
+pub(super) use update::{
+    AppUpdateState, MihomoCoreUpdateOutcome, MihomoCoreUpdatePhase, MihomoCoreUpdateState,
+};
+use update::{SharedDownloadProgress, install_downloaded_mihomo_core};

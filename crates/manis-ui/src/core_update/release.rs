@@ -1,8 +1,54 @@
+use crate::app_update::DownloadProgress;
+
 use super::{
     ArchiveKind, CoreUpdateError, CoreUpdateFailureKind, Deserialize, LATEST_STABLE_RELEASE_API,
     MAX_CORE_PACKAGE_BYTES, MAX_RELEASE_METADATA_BYTES, PathBuf, Platform, ReleaseAsset,
-    download_bytes, download_text, parse_sha256_digest, verify_asset_digest,
+    download_bytes_with_progress, download_text, parse_sha256_digest, verify_asset_digest,
 };
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum CoreUpdateCheck {
+    Current { version: String },
+    Available(ReleaseAsset),
+}
+
+pub(crate) fn normalize_core_version(version: &str) -> String {
+    let trimmed = version.trim();
+    if trimmed.is_empty() {
+        String::new()
+    } else if trimmed.starts_with('v') {
+        trimmed.to_owned()
+    } else {
+        format!("v{trimmed}")
+    }
+}
+
+pub(crate) fn is_newer_core_version(current: Option<&str>, candidate: &str) -> bool {
+    let Some(current) = current.map(str::trim).filter(|value| !value.is_empty()) else {
+        return true;
+    };
+    let candidate_trimmed = candidate.trim();
+    if candidate_trimmed.is_empty() {
+        return false;
+    }
+    match (
+        parse_numeric_triplet(current),
+        parse_numeric_triplet(candidate_trimmed),
+    ) {
+        (Some(current_ver), Some(candidate_ver)) => candidate_ver > current_ver,
+        _ => normalize_core_version(current) != normalize_core_version(candidate_trimmed),
+    }
+}
+
+fn parse_numeric_triplet(version: &str) -> Option<(u64, u64, u64)> {
+    let stripped = version.trim().strip_prefix('v').unwrap_or(version.trim());
+    let core = stripped.split('-').next()?;
+    let mut parts = core.split('.');
+    let major = parts.next()?.parse::<u64>().ok()?;
+    let minor = parts.next()?.parse::<u64>().ok()?;
+    let patch = parts.next()?.parse::<u64>().ok()?;
+    Some((major, minor, patch))
+}
 
 pub(crate) fn select_release_asset(
     release_json: &str,
@@ -41,6 +87,7 @@ pub(crate) fn select_release_asset(
         download_url: selected.browser_download_url,
         archive,
         sha256: digest,
+        size: selected.size.filter(|size| *size > 0),
     })
 }
 
@@ -84,10 +131,25 @@ struct GithubAsset {
     name: String,
     browser_download_url: String,
     digest: Option<String>,
+    #[serde(default)]
+    size: Option<u64>,
 }
 
 pub(crate) fn fetch_current_release_asset() -> Result<ReleaseAsset, CoreUpdateError> {
     fetch_release_asset_for_platform(Platform::current()?)
+}
+
+pub(crate) fn check_for_core_update(
+    current_version: Option<&str>,
+) -> Result<CoreUpdateCheck, CoreUpdateError> {
+    let asset = fetch_current_release_asset()?;
+    if is_newer_core_version(current_version, &asset.version) {
+        Ok(CoreUpdateCheck::Available(asset))
+    } else {
+        Ok(CoreUpdateCheck::Current {
+            version: asset.version,
+        })
+    }
 }
 
 pub(crate) fn fetch_release_asset_for_platform(
@@ -97,9 +159,17 @@ pub(crate) fn fetch_release_asset_for_platform(
     select_release_asset(&metadata, platform)
 }
 
-pub(crate) fn download_asset_package(asset: &ReleaseAsset) -> Result<Vec<u8>, CoreUpdateError> {
-    download_bytes(&asset.download_url, MAX_CORE_PACKAGE_BYTES)
-        .and_then(|package| verify_asset_digest(asset, &package).map(|()| package))
+pub(crate) fn download_asset_package_with_progress(
+    asset: &ReleaseAsset,
+    on_progress: impl FnMut(DownloadProgress),
+) -> Result<Vec<u8>, CoreUpdateError> {
+    download_bytes_with_progress(
+        &asset.download_url,
+        asset.size,
+        MAX_CORE_PACKAGE_BYTES,
+        on_progress,
+    )
+    .and_then(|package| verify_asset_digest(asset, &package).map(|()| package))
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

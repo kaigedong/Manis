@@ -1,7 +1,8 @@
 use super::{
     CoreUpdateError, CoreUpdateFailureKind, InstalledCore, Ordering, Path, PathBuf, ReleaseAsset,
-    STAGE_COUNTER, SeedInstallOutcome, download_asset_package, fetch_current_release_asset, fs,
-    unpack_core_binary, validate_binary_version, verify_asset_digest,
+    STAGE_COUNTER, SeedInstallOutcome, VERSION_PROBE_TIMEOUT, fs,
+    reported_binary_version_with_timeout, unpack_core_binary, validate_binary_version,
+    verify_asset_digest,
 };
 use std::io::Write as _;
 
@@ -274,12 +275,17 @@ pub(crate) fn install_bundled_seed_if_missing() -> Result<SeedInstallOutcome, Co
     install_seed_if_missing_from(bundled_seed_path().as_deref(), &target)
 }
 
-pub(crate) fn install_latest_core_update(
+pub(crate) fn probe_installed_core_version() -> Option<String> {
+    let path = managed_core_binary_path().ok()?;
+    reported_binary_version_with_timeout(&path, VERSION_PROBE_TIMEOUT).ok()
+}
+
+pub(crate) fn install_downloaded_core_package(
+    asset: &ReleaseAsset,
+    package: &[u8],
     health_check: impl FnOnce() -> Result<(), CoreUpdateError>,
 ) -> Result<InstalledCore, CoreUpdateError> {
-    let asset = fetch_current_release_asset()?;
-    let package = download_asset_package(&asset)?;
-    install_asset_package(&managed_core_path()?, &asset, &package, health_check)
+    install_asset_package(&managed_core_path()?, asset, package, health_check)
 }
 
 pub(crate) fn install_asset_package(
