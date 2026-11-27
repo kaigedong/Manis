@@ -195,10 +195,10 @@ jobs:
             /home/builder/.cargo/registry/cache/
             /home/builder/.cargo/git/db/
             target/archlinux/
-          key: cargo-package-archlinux-x86_64-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', '**/Cargo.toml') }}
+          key: cargo-package-archlinux-x86_64-nolto-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', '**/Cargo.toml', 'packaging/archlinux/PKGBUILD') }}
           restore-keys: |
-            cargo-package-archlinux-x86_64-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', '**/Cargo.toml') }}-
-            cargo-package-archlinux-x86_64-
+            cargo-package-archlinux-x86_64-nolto-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', '**/Cargo.toml', 'packaging/archlinux/PKGBUILD') }}-
+            cargo-package-archlinux-x86_64-nolto-
       - name: Prepare Cargo cache ownership
         shell: bash
         run: |
