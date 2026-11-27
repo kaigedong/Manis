@@ -431,40 +431,50 @@ pub(crate) const LOCAL_RULE_GROUP_TARGET_REQUIRED: LocalizedText = LocalizedText
 
 pub(crate) const PROXY_DNS_TITLE: LocalizedText =
     LocalizedText::new("Node DNS (DoH)", "节点域名解析（DoH）");
-pub(crate) const PROXY_DNS_SOURCE_CUSTOM: LocalizedText =
-    LocalizedText::new("Custom DoH", "自定义 DoH");
-pub(crate) const PROXY_DNS_SOURCE_SUBSCRIPTION: LocalizedText =
-    LocalizedText::new("Subscription DoH", "订阅自动发现");
-pub(crate) const PROXY_DNS_SOURCE_DEFAULT: LocalizedText =
-    LocalizedText::new("Built-in default DoH", "默认公共 DoH");
+pub(crate) const PROXY_DNS_ADD: LocalizedText = LocalizedText::new("Add DoH", "添加 DoH");
 pub(crate) const PROXY_DNS_TAG_CUSTOM: LocalizedText = LocalizedText::new("Custom", "自定义");
 pub(crate) const PROXY_DNS_TAG_DEFAULT: LocalizedText = LocalizedText::new("Default", "默认");
+pub(crate) const PROXY_DNS_ENABLED: LocalizedText = LocalizedText::new("Enabled", "已启用");
 pub(crate) const PROXY_DNS_CUSTOM_SUBTITLE: LocalizedText = LocalizedText::new(
-    "Overrides subscription and built-in DoH when resolving proxy node hostnames.",
-    "优先使用以下手动配置的 DoH 解析所有代理节点域名，覆盖订阅与默认值。",
+    "Custom list takes priority over subscription and built-in DoH.",
+    "优先使用勾选的自定义 DoH 解析节点域名，覆盖订阅与默认值。",
+);
+pub(crate) const PROXY_DNS_CUSTOM_FALLBACK_SUBTITLE: LocalizedText = LocalizedText::new(
+    "All entries are unchecked; falling back to built-in public DoH.",
+    "当前未勾选任何条目，已自动回退到内置公共 DoH。",
 );
 pub(crate) const PROXY_DNS_SUBSCRIPTION_SUBTITLE: LocalizedText = LocalizedText::new(
     "Discovered from enabled subscriptions and preserved if a refresh omits them.",
-    "来自已启用订阅的 proxy-server-nameserver；后续刷新未返回时会自动保留。",
+    "来自已启用订阅的 proxy-server-nameserver；刷新未返回时自动保留。",
 );
 pub(crate) const PROXY_DNS_DEFAULT_SUBTITLE: LocalizedText = LocalizedText::new(
-    "No subscription DoH is present; falling back to built-in public DoH.",
-    "当前订阅未提供私有 DoH，已回退到内置公共 DoH。",
+    "No subscription DoH is present; using built-in public DoH.",
+    "当前订阅未提供私有 DoH，当前使用内置公共 DoH。",
 );
 pub(crate) const PROXY_DNS_COPY: LocalizedText = LocalizedText::new("Copy", "复制");
 pub(crate) const PROXY_DNS_COPIED: LocalizedText =
     LocalizedText::new("Node DNS servers copied", "已复制节点 DoH 列表");
 pub(crate) const PROXY_DNS_EDIT: LocalizedText = LocalizedText::new("Edit", "编辑");
-pub(crate) const PROXY_DNS_SAVE: LocalizedText = LocalizedText::new("Save & apply", "保存并应用");
+pub(crate) const PROXY_DNS_EDIT_THIS: LocalizedText =
+    LocalizedText::new("Edit this DoH server", "编辑这条 DoH 服务器");
+pub(crate) const PROXY_DNS_REMOVE_THIS: LocalizedText =
+    LocalizedText::new("Remove this DoH server", "移除这条 DoH 服务器");
+pub(crate) const PROXY_DNS_PLACEHOLDER: LocalizedText = LocalizedText::new(
+    "https://example.com/dns-query",
+    "输入 https:// 开头的 DoH 地址，例如 https://223.5.5.5/dns-query",
+);
+pub(crate) const PROXY_DNS_INVALID_URL: LocalizedText = LocalizedText::new(
+    "Enter a valid https:// DoH URL without spaces.",
+    "请输入有效的 https:// DoH 地址（不能包含空格）。",
+);
+pub(crate) const PROXY_DNS_DUPLICATE: LocalizedText = LocalizedText::new(
+    "This DoH server is already in the list.",
+    "列表中已存在这条 DoH 地址。",
+);
+pub(crate) const PROXY_DNS_SAVE: LocalizedText = LocalizedText::new("Save", "保存");
 pub(crate) const PROXY_DNS_SAVING: LocalizedText = LocalizedText::new("Applying…", "正在应用…");
 pub(crate) const PROXY_DNS_RESET_AUTO: LocalizedText =
     LocalizedText::new("Reset to auto", "恢复自动");
-pub(crate) const PROXY_DNS_EDITOR_HINT: LocalizedText = LocalizedText::new(
-    "One https:// DoH URL per line (up to 8). Save empty to restore subscription or default DoH.",
-    "每行填写一个 https:// 开头的 DoH 地址（最多 8 条）。留空保存将恢复订阅自动发现或默认 DoH。",
-);
-pub(crate) const PROXY_DNS_EDITOR_LABEL: LocalizedText =
-    LocalizedText::new("Custom DoH servers", "自定义 DoH 服务器");
 pub(crate) const PROXY_DNS_APPLYING: LocalizedText =
     LocalizedText::new("Applying node DNS settings", "正在应用节点域名解析设置");
 pub(crate) const PROXY_DNS_STORE_UNAVAILABLE: LocalizedText = LocalizedText::new(

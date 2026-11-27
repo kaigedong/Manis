@@ -73,7 +73,10 @@ fn kind_of(name: &str) -> Kind {
 }
 
 fn is_hex_field(key: &str) -> bool {
-    matches!(key, "name" | "filter" | "url" | "target" | "proxy-dns")
+    matches!(
+        key,
+        "name" | "filter" | "url" | "target" | "proxy-dns" | "proxy-dns-disabled"
+    )
 }
 
 fn decode_field(value: &str) -> String {

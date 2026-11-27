@@ -113,19 +113,28 @@ pub(crate) fn profile_mode(mode: RoutingMode) -> ProfileMode {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct StoredProxyDnsEntry {
+    pub(crate) server: ProxyDnsServer,
+    pub(crate) enabled: bool,
+}
+
 #[cfg(not(windows))]
-pub(crate) fn save_custom_proxy_dns_servers_in(
+pub(crate) fn save_custom_proxy_dns_entries_in(
     directory: &Path,
-    servers: &[ProxyDnsServer],
+    entries: &[StoredProxyDnsEntry],
 ) -> Result<(), SubscriptionStoreError> {
     require_clean_absolute_store(directory)?;
-    if servers.len() > MAX_SUBSCRIPTION_PROXY_DNS_SERVERS {
+    if entries.len() > MAX_SUBSCRIPTION_PROXY_DNS_SERVERS {
         return Err(SubscriptionStoreError::InvalidSource);
     }
-    let mut deduplicated: Vec<&ProxyDnsServer> = Vec::with_capacity(servers.len());
-    for server in servers {
-        if !deduplicated.contains(&server) {
-            deduplicated.push(server);
+    let mut deduplicated: Vec<&StoredProxyDnsEntry> = Vec::with_capacity(entries.len());
+    for entry in entries {
+        if !deduplicated
+            .iter()
+            .any(|existing| existing.server == entry.server)
+        {
+            deduplicated.push(entry);
         }
     }
     if deduplicated.is_empty() {
@@ -134,8 +143,13 @@ pub(crate) fn save_custom_proxy_dns_servers_in(
     }
     let mut lines = Vec::with_capacity(deduplicated.len() + 1);
     lines.push(CUSTOM_PROXY_DNS_VERSION.to_owned());
-    for server in deduplicated {
-        lines.push(format!("proxy-dns\t{}", encode_hex(server.as_str())));
+    for entry in deduplicated {
+        let key = if entry.enabled {
+            "proxy-dns"
+        } else {
+            "proxy-dns-disabled"
+        };
+        lines.push(format!("{key}\t{}", encode_hex(entry.server.as_str())));
     }
     let contents = format!("{}\n", lines.join("\n"));
     write_private_atomic(directory, CUSTOM_PROXY_DNS_FILE, contents.as_bytes())
@@ -144,17 +158,17 @@ pub(crate) fn save_custom_proxy_dns_servers_in(
 }
 
 #[cfg(windows)]
-pub(crate) fn save_custom_proxy_dns_servers_in(
+pub(crate) fn save_custom_proxy_dns_entries_in(
     _directory: &Path,
-    _servers: &[ProxyDnsServer],
+    _entries: &[StoredProxyDnsEntry],
 ) -> Result<(), SubscriptionStoreError> {
     Err(SubscriptionStoreError::StoreUnavailable)
 }
 
 #[cfg(not(windows))]
-pub(crate) fn load_custom_proxy_dns_servers_in(
+pub(crate) fn load_custom_proxy_dns_entries_in(
     directory: &Path,
-) -> Result<Vec<ProxyDnsServer>, SubscriptionStoreError> {
+) -> Result<Vec<StoredProxyDnsEntry>, SubscriptionStoreError> {
     require_clean_absolute_store(directory)?;
     let Some(contents) = crate::config_toml::read_entry(
         directory,
@@ -172,27 +186,58 @@ pub(crate) fn load_custom_proxy_dns_servers_in(
     if version != CUSTOM_PROXY_DNS_VERSION {
         return Err(SubscriptionStoreError::StoredSourceUnavailable);
     }
-    let mut servers = Vec::new();
+    let mut entries: Vec<StoredProxyDnsEntry> = Vec::new();
     for line in lines {
-        let Some(("proxy-dns", encoded)) = line.split_once('\t') else {
+        let Some((key, encoded)) = line.split_once('\t') else {
             return Err(SubscriptionStoreError::StoredSourceUnavailable);
+        };
+        let enabled = match key {
+            "proxy-dns" => true,
+            "proxy-dns-disabled" => false,
+            _ => return Err(SubscriptionStoreError::StoredSourceUnavailable),
         };
         let decoded = decode_hex(encoded)?;
         let server = ProxyDnsServer::parse_https(&decoded)
             .map_err(|_error| SubscriptionStoreError::StoredSourceUnavailable)?;
-        if servers.len() >= MAX_SUBSCRIPTION_PROXY_DNS_SERVERS {
+        if entries.len() >= MAX_SUBSCRIPTION_PROXY_DNS_SERVERS {
             return Err(SubscriptionStoreError::StoredSourceUnavailable);
         }
-        if !servers.contains(&server) {
-            servers.push(server);
+        if !entries.iter().any(|existing| existing.server == server) {
+            entries.push(StoredProxyDnsEntry { server, enabled });
         }
     }
-    Ok(servers)
+    Ok(entries)
 }
 
 #[cfg(windows)]
-pub(crate) fn load_custom_proxy_dns_servers_in(
+pub(crate) fn load_custom_proxy_dns_entries_in(
     _directory: &Path,
-) -> Result<Vec<ProxyDnsServer>, SubscriptionStoreError> {
+) -> Result<Vec<StoredProxyDnsEntry>, SubscriptionStoreError> {
     Ok(Vec::new())
+}
+
+#[cfg(test)]
+pub(crate) fn save_custom_proxy_dns_servers_in(
+    directory: &Path,
+    servers: &[ProxyDnsServer],
+) -> Result<(), SubscriptionStoreError> {
+    let entries: Vec<_> = servers
+        .iter()
+        .cloned()
+        .map(|server| StoredProxyDnsEntry {
+            server,
+            enabled: true,
+        })
+        .collect();
+    save_custom_proxy_dns_entries_in(directory, &entries)
+}
+
+pub(crate) fn load_custom_proxy_dns_servers_in(
+    directory: &Path,
+) -> Result<Vec<ProxyDnsServer>, SubscriptionStoreError> {
+    Ok(load_custom_proxy_dns_entries_in(directory)?
+        .into_iter()
+        .filter(|entry| entry.enabled)
+        .map(|entry| entry.server)
+        .collect())
 }

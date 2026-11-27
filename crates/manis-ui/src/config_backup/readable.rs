@@ -319,7 +319,10 @@ fn is_storage_version(value: &str) -> bool {
 }
 
 fn needs_hex_encoding(key: &str) -> bool {
-    matches!(key, "name" | "filter" | "url" | "target" | "proxy-dns")
+    matches!(
+        key,
+        "name" | "filter" | "url" | "target" | "proxy-dns" | "proxy-dns-disabled"
+    )
 }
 
 fn decode_field_for_key(key: &str, value: &str) -> String {

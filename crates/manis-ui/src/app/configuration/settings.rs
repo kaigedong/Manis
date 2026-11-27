@@ -31,6 +31,7 @@ pub(in crate::app) use proxy_dns::ProxyDnsEditorState;
 /// Expansion state for collapsible desktop settings cards (collapsed by default).
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(in crate::app) struct SettingsDisclosureState {
+    proxy_dns: bool,
     proxy_sources: bool,
     rule_sources: bool,
 }
@@ -38,6 +39,7 @@ pub(in crate::app) struct SettingsDisclosureState {
 impl SettingsDisclosureState {
     const fn is_expanded(self, section: SettingsDisclosureSection) -> bool {
         match section {
+            SettingsDisclosureSection::ProxyDns => self.proxy_dns,
             SettingsDisclosureSection::ProxySources => self.proxy_sources,
             SettingsDisclosureSection::RuleSources => self.rule_sources,
         }
@@ -45,6 +47,7 @@ impl SettingsDisclosureState {
 
     const fn toggle(&mut self, section: SettingsDisclosureSection) {
         match section {
+            SettingsDisclosureSection::ProxyDns => self.proxy_dns = !self.proxy_dns,
             SettingsDisclosureSection::ProxySources => self.proxy_sources = !self.proxy_sources,
             SettingsDisclosureSection::RuleSources => self.rule_sources = !self.rule_sources,
         }
@@ -52,6 +55,7 @@ impl SettingsDisclosureState {
 
     const fn expand(&mut self, section: SettingsDisclosureSection) {
         match section {
+            SettingsDisclosureSection::ProxyDns => self.proxy_dns = true,
             SettingsDisclosureSection::ProxySources => self.proxy_sources = true,
             SettingsDisclosureSection::RuleSources => self.rule_sources = true,
         }
@@ -61,6 +65,7 @@ impl SettingsDisclosureState {
 /// Settings sections that render as collapsed-by-default inset disclosure cards.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum SettingsDisclosureSection {
+    ProxyDns,
     ProxySources,
     RuleSources,
 }
@@ -68,6 +73,7 @@ pub(super) enum SettingsDisclosureSection {
 impl SettingsDisclosureSection {
     const fn section_id(self) -> &'static str {
         match self {
+            Self::ProxyDns => "configuration-proxy-dns-section",
             Self::ProxySources => "configuration-proxy-sources-section",
             Self::RuleSources => "configuration-rule-sources-section",
         }
@@ -75,6 +81,7 @@ impl SettingsDisclosureSection {
 
     const fn card_id(self) -> &'static str {
         match self {
+            Self::ProxyDns => "configuration-proxy-dns",
             Self::ProxySources => "configuration-source",
             Self::RuleSources => "configuration-rule-sources",
         }
@@ -82,6 +89,7 @@ impl SettingsDisclosureSection {
 
     const fn toggle_id(self) -> &'static str {
         match self {
+            Self::ProxyDns => "settings-disclosure-proxy-dns",
             Self::ProxySources => "settings-disclosure-proxy-sources",
             Self::RuleSources => "settings-disclosure-rule-sources",
         }
@@ -89,6 +97,7 @@ impl SettingsDisclosureSection {
 
     const fn body_id(self) -> &'static str {
         match self {
+            Self::ProxyDns => "configuration-proxy-dns-body",
             Self::ProxySources => "configuration-source-body",
             Self::RuleSources => "configuration-rule-sources-body",
         }

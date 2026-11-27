@@ -483,20 +483,20 @@ pub(crate) fn local_rule_group_delete_notice(
     }
 }
 
-pub(crate) fn proxy_dns_count_summary(language: Language, source: &str, count: usize) -> String {
-    match language {
-        Language::English => format!("{source} · {count}"),
-        Language::SimplifiedChinese => format!("{source} · {count} 条"),
-    }
-}
-
-pub(crate) fn proxy_dns_invalid_line(language: Language, line_number: usize) -> String {
-    match language {
-        Language::English => {
-            format!("Line {line_number} must be a valid https:// DoH URL without spaces.")
+pub(crate) fn proxy_dns_enabled_summary(
+    language: Language,
+    enabled: usize,
+    total: usize,
+) -> String {
+    if enabled == total {
+        match language {
+            Language::English => format!("{enabled} active"),
+            Language::SimplifiedChinese => format!("{enabled} 条生效"),
         }
-        Language::SimplifiedChinese => {
-            format!("第 {line_number} 行必须是有效的 https:// DoH 地址且不能包含空格。")
+    } else {
+        match language {
+            Language::English => format!("{enabled}/{total} active"),
+            Language::SimplifiedChinese => format!("{enabled}/{total} 条生效"),
         }
     }
 }
@@ -517,9 +517,11 @@ pub(crate) fn proxy_dns_saved(language: Language, custom_count: usize, suffix: &
     } else {
         match language {
             Language::English => {
-                format!("Saved {custom_count} custom DoH server(s){suffix}")
+                format!("Updated node DNS ({custom_count} active){suffix}")
             }
-            Language::SimplifiedChinese => format!("已保存 {custom_count} 条自定义 DoH{suffix}"),
+            Language::SimplifiedChinese => {
+                format!("已更新节点域名解析（{custom_count} 条生效）{suffix}")
+            }
         }
     }
 }

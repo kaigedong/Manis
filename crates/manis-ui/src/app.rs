@@ -203,7 +203,7 @@ pub struct ManisApp {
     status: String,
     launch_at_login: bool,
     auto_connect: AutoConnectState,
-    custom_proxy_dns_servers: Vec<manis_profile::ProxyDnsServer>,
+    custom_proxy_dns_entries: Vec<mihomo::StoredProxyDnsEntry>,
     proxy_dns_editor: configuration::ProxyDnsEditorState,
     proxy_source_editor: ProxySourceEditorState,
     inputs: WorkspaceInputs,
@@ -346,7 +346,7 @@ impl ManisApp {
             node_latencies,
             exit_ips,
             routing_mode,
-            custom_proxy_dns_servers,
+            custom_proxy_dns_entries,
             error: source_store_error,
         } = stored_workspace;
         let default_rule_target = managed_policy_groups
@@ -420,7 +420,7 @@ impl ManisApp {
                 enabled: auto_connect_enabled,
                 ..AutoConnectState::default()
             },
-            custom_proxy_dns_servers,
+            custom_proxy_dns_entries,
             proxy_dns_editor: configuration::ProxyDnsEditorState::default(),
             proxy_source_editor: ProxySourceEditorState::default(),
             inputs: WorkspaceInputs::default(),

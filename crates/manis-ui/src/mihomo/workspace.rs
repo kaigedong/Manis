@@ -91,9 +91,12 @@ pub(super) use subscription_sources::{
 pub(crate) use subscription_sources::{
     save_subscription_source_in, update_subscription_source_refresh_interval_in,
 };
+#[cfg(test)]
+pub(crate) use workspace_preferences::save_custom_proxy_dns_servers_in;
 pub(crate) use workspace_preferences::{
-    load_collapsed_groups_in, load_custom_proxy_dns_servers_in, load_routing_mode_in, profile_mode,
-    save_collapsed_groups_in, save_custom_proxy_dns_servers_in, save_routing_mode_in,
+    StoredProxyDnsEntry, load_collapsed_groups_in, load_custom_proxy_dns_entries_in,
+    load_custom_proxy_dns_servers_in, load_routing_mode_in, profile_mode, save_collapsed_groups_in,
+    save_custom_proxy_dns_entries_in, save_routing_mode_in,
 };
 
 #[cfg(any(windows, test))]

@@ -265,12 +265,58 @@ proxies: []
     let yaml = manis_profile::render_mihomo_yaml(&profile)?;
     assert!(yaml.contains("https://192.0.2.10:8443/dns-query/clash?site=fixture"));
 
-    // Custom proxy DNS overrides subscription-discovered DoH and restores it when cleared.
-    let custom = vec![
-        manis_profile::ProxyDnsServer::parse_https("https://203.0.113.55:8443/dns-query")?,
-        manis_profile::ProxyDnsServer::parse_https("https://203.0.113.55:8443/dns-query")?,
+    fs::remove_dir_all(root)?;
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn custom_proxy_dns_entries_override_subscription_and_roundtrip_backup()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = test_temp_dir("manis-custom-proxy-dns");
+    let store = root.join("subscriptions");
+    fs::create_dir(&store)?;
+    fs::set_permissions(&store, fs::Permissions::from_mode(0o700))?;
+    let sub = super::save_subscription_source_with_options_in(
+        &store,
+        "https://legacy.example.invalid/client?token=fixture",
+        "Fixture",
+        super::RemoteSourceRefreshInterval::Manual,
+        true,
+    )?;
+    super::update_subscription_source_proxy_nameservers_in(
+        &store,
+        &sub.id,
+        &[manis_profile::ProxyDnsServer::parse_https(
+            "https://192.0.2.10:8443/dns-query/clash?site=fixture",
+        )?],
+    )?;
+
+    let custom_entries = vec![
+        super::StoredProxyDnsEntry {
+            server: manis_profile::ProxyDnsServer::parse_https(
+                "https://203.0.113.55:8443/dns-query",
+            )?,
+            enabled: true,
+        },
+        super::StoredProxyDnsEntry {
+            server: manis_profile::ProxyDnsServer::parse_https(
+                "https://203.0.113.55:8443/dns-query",
+            )?,
+            enabled: false,
+        },
+        super::StoredProxyDnsEntry {
+            server: manis_profile::ProxyDnsServer::parse_https(
+                "https://203.0.113.88:8443/dns-query",
+            )?,
+            enabled: false,
+        },
     ];
-    super::save_custom_proxy_dns_servers_in(&store, &custom)?;
+    super::save_custom_proxy_dns_entries_in(&store, &custom_entries)?;
+    let loaded_entries = super::load_custom_proxy_dns_entries_in(&store)?;
+    assert_eq!(loaded_entries.len(), 2);
+    assert!(loaded_entries[0].enabled);
+    assert!(!loaded_entries[1].enabled);
     let loaded_custom = super::load_custom_proxy_dns_servers_in(&store)?;
     assert_eq!(loaded_custom.len(), 1);
     assert_eq!(
@@ -280,11 +326,13 @@ proxies: []
     let custom_profile = super::compile_saved_profile(&store, None)?;
     let custom_yaml = manis_profile::render_mihomo_yaml(&custom_profile)?;
     assert!(custom_yaml.contains("https://203.0.113.55:8443/dns-query"));
+    assert!(!custom_yaml.contains("https://203.0.113.88:8443/dns-query"));
     assert!(!custom_yaml.contains("https://192.0.2.10:8443/dns-query/clash?site=fixture"));
 
-    // Backup readable export & validation round-trip custom proxy DNS cleanly.
+    // Backup readable export & validation round-trip both enabled and disabled entries cleanly.
     let exported = crate::config_backup::read_configuration_for_editing(&store)?;
     assert!(exported.contains("https://203.0.113.55:8443/dns-query"));
+    assert!(exported.contains("https://203.0.113.88:8443/dns-query"));
     let prepared = crate::config_backup::prepare_import(&exported)?;
     assert_eq!(prepared.summary().subscriptions, 1);
 

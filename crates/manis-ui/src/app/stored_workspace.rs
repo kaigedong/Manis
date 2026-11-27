@@ -48,7 +48,7 @@ pub(super) struct StoredWorkspace {
     pub(super) node_latencies: BTreeMap<String, NodeLatencyRecord>,
     pub(super) exit_ips: BTreeMap<String, (Option<String>, u64)>,
     pub(super) routing_mode: RoutingMode,
-    pub(super) custom_proxy_dns_servers: Vec<manis_profile::ProxyDnsServer>,
+    pub(super) custom_proxy_dns_entries: Vec<mihomo::StoredProxyDnsEntry>,
     pub(super) error: Option<SubscriptionStoreError>,
 }
 
@@ -80,7 +80,7 @@ impl StoredWorkspace {
             exit_ips: BTreeMap::new(),
         });
         let routing_mode = mihomo::load_routing_mode_in(directory);
-        let custom_proxy_dns_servers = mihomo::load_custom_proxy_dns_servers_in(directory);
+        let custom_proxy_dns_entries = mihomo::load_custom_proxy_dns_entries_in(directory);
         let error = [
             subscriptions.is_err(),
             nodes.is_err(),
@@ -91,7 +91,7 @@ impl StoredWorkspace {
             policy_groups.is_err(),
             node_selection_preferences.is_err(),
             routing_mode.is_err(),
-            custom_proxy_dns_servers.is_err(),
+            custom_proxy_dns_entries.is_err(),
         ]
         .into_iter()
         .any(std::convert::identity)
@@ -113,7 +113,7 @@ impl StoredWorkspace {
             node_latencies: restored_cache.node_latencies,
             exit_ips: restored_cache.exit_ips,
             routing_mode: routing_mode.unwrap_or_default(),
-            custom_proxy_dns_servers: custom_proxy_dns_servers.unwrap_or_default(),
+            custom_proxy_dns_entries: custom_proxy_dns_entries.unwrap_or_default(),
             error,
         }
     }
@@ -132,7 +132,7 @@ impl StoredWorkspace {
             node_latencies: BTreeMap::new(),
             exit_ips: BTreeMap::new(),
             routing_mode: RoutingMode::Rule,
-            custom_proxy_dns_servers: Vec::new(),
+            custom_proxy_dns_entries: Vec::new(),
             error: None,
         }
     }
