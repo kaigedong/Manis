@@ -24,14 +24,30 @@ data class GroupInfo(
 data class ConnectionInfo(
     val id: String,
     val host: String,
-    val destinationIp: String,
-    val network: String,
-    val rule: String,
-    val chains: List<String>,
-    val upload: Long,
-    val download: Long,
-    val start: String,
-)
+    val sniffHost: String = "",
+    val destinationIp: String = "",
+    val remoteDestination: String = "",
+    val destinationPort: String = "",
+    val network: String = "",
+    val process: String = "",
+    val processPath: String = "",
+    val rule: String = "",
+    val rulePayload: String = "",
+    val chains: List<String> = emptyList(),
+    val upload: Long = 0L,
+    val download: Long = 0L,
+    val start: String = "",
+) {
+    /**
+     * Most informative target host reported by Mihomo, matching desktop
+     * `ConnectionMetadata::target_host`: sniffed hostname -> host -> destinationIP -> remoteDestination.
+     */
+    val targetHost: String
+        get() = listOf(sniffHost, host, destinationIp, remoteDestination)
+            .map(String::trim)
+            .firstOrNull { it.isNotEmpty() }
+            .orEmpty()
+}
 
 data class ConnectionsSnapshot(
     val uploadTotal: Long,
@@ -191,6 +207,7 @@ internal object ControllerApi {
     }
 
     suspend fun connections(): ConnectionsSnapshot = withContext(Dispatchers.IO) {
+        configure(CoreController.secret)
         val json = request("/connections")
         val items = mutableListOf<ConnectionInfo>()
         val array = json.optJSONArray("connections")
@@ -200,19 +217,27 @@ internal object ControllerApi {
                 val metadata = item.optJSONObject("metadata") ?: continue
                 val chains = mutableListOf<String>()
                 item.optJSONArray("chains")?.let { chain ->
-                    for (at in 0 until chain.length()) chains += chain.optString(at)
+                    for (at in 0 until chain.length()) {
+                        val stage = if (chain.isNull(at)) "" else chain.optString(at).trim()
+                        if (stage.isNotEmpty()) chains += stage
+                    }
                 }
                 items += ConnectionInfo(
-                    id = item.optString("id"),
-                    host = metadata.optString("host")
-                        .ifBlank { metadata.optString("destinationIP") },
-                    destinationIp = metadata.optString("destinationIP"),
-                    network = metadata.optString("network"),
-                    rule = item.optString("rule"),
+                    id = item.stringOrEmpty("id"),
+                    host = metadata.stringOrEmpty("host"),
+                    sniffHost = metadata.stringOrEmpty("sniffHost"),
+                    destinationIp = metadata.stringOrEmpty("destinationIP"),
+                    remoteDestination = metadata.stringOrEmpty("remoteDestination"),
+                    destinationPort = metadata.stringOrEmpty("destinationPort"),
+                    network = metadata.stringOrEmpty("network"),
+                    process = metadata.stringOrEmpty("process"),
+                    processPath = metadata.stringOrEmpty("processPath"),
+                    rule = item.stringOrEmpty("rule"),
+                    rulePayload = item.stringOrEmpty("rulePayload"),
                     chains = chains,
                     upload = item.optLong("upload"),
                     download = item.optLong("download"),
-                    start = item.optString("start"),
+                    start = item.stringOrEmpty("start"),
                 )
             }
         }
@@ -222,6 +247,9 @@ internal object ControllerApi {
             connections = items,
         )
     }
+
+    private fun JSONObject.stringOrEmpty(key: String): String =
+        if (isNull(key)) "" else optString(key).trim()
 
     private fun historyDelay(proxy: JSONObject): Int? {
         val history = proxy.optJSONArray("history") ?: return null

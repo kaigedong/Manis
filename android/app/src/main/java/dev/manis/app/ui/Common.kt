@@ -27,10 +27,22 @@ fun applyWorkspace(context: Context) {
     )
 }
 
+internal const val MANIS_GLOBAL_GROUP_NAME = "__MANIS_GLOBAL__"
+internal const val MANIS_EXIT_IP_PROBE_GROUP_NAME = "__MANIS_EXIT_IP_PROBE__"
+
+/** Internal controller groups created by Manis or Mihomo that must never appear as user route stages. */
+internal fun isInternalProxyGroup(name: String): Boolean {
+    val trimmed = name.trim()
+    return trimmed == MANIS_GLOBAL_GROUP_NAME ||
+        trimmed == MANIS_EXIT_IP_PROBE_GROUP_NAME ||
+        trimmed == "GLOBAL"
+}
+
 /** Internal controller names that must never reach the UI. */
 internal fun displayProxyName(name: String?): String? = when (name) {
     null -> null
-    "__MANIS_GLOBAL__", "GLOBAL" -> "全局"
+    MANIS_GLOBAL_GROUP_NAME, "GLOBAL" -> "全局"
+    MANIS_EXIT_IP_PROBE_GROUP_NAME -> "出口探测"
     else -> name
 }
 

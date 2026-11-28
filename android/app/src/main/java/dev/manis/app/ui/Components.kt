@@ -865,22 +865,24 @@ private fun RouteSegment(label: String, tone: ManisTone, mono: Boolean, dot: Boo
             color = toneColors.foreground,
             fontWeight = FontWeight.Medium,
             maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
     }
 }
 
 /**
- * The signature observed route: `[rule] -> [policy group] -> [exit · latency]`.
+ * The signature observed route: `[rule] -> [policy/rule group] -> [exit · latency]`.
  *
- * Royal Violet marks the matched rule only. A direct exit renders neutral `DIRECT`; a rejected
- * route renders the error tone, so the eye can tell evidence from prediction.
+ * Royal Violet marks the matched rule only. The middle group segment is omitted when no rule
+ * group or user policy group applies (never showing internal runtime groups). A direct exit
+ * renders neutral `直连`; a rejected route renders the error tone.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ManisRouteChain(
     rule: String,
-    group: String,
-    exit: String,
+    group: String?,
+    exit: String?,
     latency: Int?,
     modifier: Modifier = Modifier,
     direct: Boolean = false,
@@ -893,20 +895,59 @@ fun ManisRouteChain(
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         RouteSegment(rule, ManisTone.Route, mono = true)
-        Text("→", style = ManisType.metadata, color = colors.textTertiary)
-        RouteSegment(group, ManisTone.Neutral, mono = false)
-        Text("→", style = ManisType.metadata, color = colors.textTertiary)
+        if (!group.isNullOrBlank()) {
+            Text(
+                "→",
+                modifier = Modifier.align(Alignment.CenterVertically),
+                style = ManisType.metadata,
+                color = colors.textTertiary,
+            )
+            RouteSegment(group, ManisTone.Neutral, mono = false)
+        }
         when {
-            rejected -> RouteSegment("REJECT", ManisTone.Error, mono = true)
-            direct -> RouteSegment("DIRECT", ManisTone.Neutral, mono = true)
-            else -> Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                RouteSegment(exit, ManisTone.Success, mono = false, dot = true)
-                if (latency != null) {
-                    ManisLatency(latency, Modifier)
+            rejected -> {
+                Text(
+                    "→",
+                    modifier = Modifier.align(Alignment.CenterVertically),
+                    style = ManisType.metadata,
+                    color = colors.textTertiary,
+                )
+                RouteSegment("REJECT", ManisTone.Error, mono = true)
+            }
+            direct -> {
+                Text(
+                    "→",
+                    modifier = Modifier.align(Alignment.CenterVertically),
+                    style = ManisType.metadata,
+                    color = colors.textTertiary,
+                )
+                RouteSegment("直连", ManisTone.Neutral, mono = false)
+            }
+            !exit.isNullOrBlank() -> {
+                Text(
+                    "→",
+                    modifier = Modifier.align(Alignment.CenterVertically),
+                    style = ManisType.metadata,
+                    color = colors.textTertiary,
+                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    RouteSegment(exit, ManisTone.Success, mono = false, dot = true)
+                    if (latency != null) {
+                        ManisLatency(latency, Modifier)
+                    }
                 }
+            }
+            else -> {
+                Text(
+                    "→",
+                    modifier = Modifier.align(Alignment.CenterVertically),
+                    style = ManisType.metadata,
+                    color = colors.textTertiary,
+                )
+                RouteSegment("无路由信息", ManisTone.Neutral, mono = false)
             }
         }
     }

@@ -255,7 +255,9 @@ private fun parseLogLine(line: String): LogEntry = runCatching {
 
 /** Replaces internal identifiers with the labels the rest of the app shows. */
 private fun displayMessage(message: String): String =
-    message.replace("__MANIS_GLOBAL__", "全局")
+    message
+        .replace(MANIS_GLOBAL_GROUP_NAME, "全局")
+        .replace(MANIS_EXIT_IP_PROBE_GROUP_NAME, "出口探测")
 
 private fun formatTime(time: String): String {
     if (time.isBlank()) return "--:--:--"

@@ -1,17 +1,19 @@
 package dev.manis.app.ui
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -29,58 +31,79 @@ import androidx.compose.ui.unit.sp
 import dev.manis.app.core.ConnectionInfo
 import dev.manis.app.core.ConnectionsSnapshot
 import dev.manis.app.core.ControllerApi
+import dev.manis.app.data.MobileConfig
 import dev.manis.app.data.RuleEntry
 import dev.manis.app.data.Workspace
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-/** The three route segments one live connection proves, plus the tone its exit earns. */
-private data class ObservedRoute(
+/** The route segments one live connection proves, matching the desktop Activity workspace. */
+internal data class ObservedRoute(
     val rule: String,
-    val group: String,
-    val exit: String,
+    val group: String?,
+    val exit: String?,
     val latency: Int?,
     val direct: Boolean,
     val rejected: Boolean,
 )
 
+private data class ActivityConnectionView(
+    val connection: ConnectionInfo,
+    val route: ObservedRoute,
+)
+
 /**
  * The activity workspace: the live connections of the running kernel, each one drawn as its
- * observed route — the rule that matched, the policy group that took it, and the exit it reached.
- * Tapping a card opens the rule sheet with the host already filled in.
+ * observed route — the rule that matched, the rule/policy group that took it (hiding internal
+ * runtime groups), and the exit it reached. Tapping a card opens the rule sheet prefilled with
+ * the sniffed host (or destination IP) and prepends the saved rule so it matches before FINAL.
  */
 @Composable
 fun ActivityWorkspace(onMessage: (String) -> Unit) {
     val colors = LocalManisColors.current
     var snapshot by remember { mutableStateOf<ConnectionsSnapshot?>(null) }
+    var loadError by remember { mutableStateOf<String?>(null) }
     var refreshing by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
     var draft by remember { mutableStateOf<RuleEditor?>(null) }
     val config = Workspace.config.value
+    val runtimeSnapshot = RuntimeState.snapshot
+    val policies = remember(config.groups) { policyOptions(config) }
     val scope = rememberCoroutineScope()
 
     LaunchedEffect(Unit) {
         while (true) {
             if (RuntimeState.active) {
                 runCatching { ControllerApi.connections() }
-                    .onSuccess { snapshot = it }
+                    .onSuccess {
+                        snapshot = it
+                        loadError = null
+                    }
+                    .onFailure { error ->
+                        loadError = error.message ?: "读取连接失败"
+                    }
             } else {
                 snapshot = null
+                loadError = null
             }
             delay(2_000)
         }
     }
 
     val allConnections = snapshot?.connections ?: emptyList()
-    val connections = remember(allConnections, query) {
+    val visibleViews = remember(allConnections, query, config.ruleGroups, config.ruleEntries, runtimeSnapshot) {
         val newestFirst = allConnections.sortedByDescending { it.start }
-        if (query.isBlank()) {
-            newestFirst
-        } else {
-            newestFirst.filter { connection ->
-                connection.host.contains(query, ignoreCase = true) ||
-                    connection.rule.contains(query, ignoreCase = true) ||
-                    connection.chains.any { it.contains(query, ignoreCase = true) }
+        newestFirst.mapNotNull { connection ->
+            val ruleGroup = matchingRuleGroup(connection, config)
+            val route = observedRoute(
+                connection = connection,
+                ruleGroup = ruleGroup,
+                nodeDelay = { exit -> runtimeSnapshot?.nodes?.get(exit)?.delay },
+            )
+            if (matchesActivityQuery(connection, route, query)) {
+                ActivityConnectionView(connection, route)
+            } else {
+                null
             }
         }
     }
@@ -91,12 +114,14 @@ fun ActivityWorkspace(onMessage: (String) -> Unit) {
             initial = state.entry,
             editingIndex = null,
             existing = config.ruleEntries,
-            policies = policyOptions(config),
+            policies = policies,
             groups = config.ruleGroups,
             onCancel = { draft = null },
             onDelete = { draft = null },
             onConfirm = { entry ->
-                Workspace.update { it.copy(ruleEntries = it.ruleEntries + entry) }
+                // Prepend so rules created from live activity match before any FINAL fallback,
+                // mirroring desktop Activity behavior.
+                Workspace.update { it.copy(ruleEntries = listOf(entry) + it.ruleEntries) }
                 draft = null
                 onMessage("已添加规则，点「应用」后生效")
             },
@@ -107,13 +132,8 @@ fun ActivityWorkspace(onMessage: (String) -> Unit) {
         ManisPageHeader(title = "网络活动")
         Column(
             Modifier
-                .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(
-                    start = ManisDimens.spaceLg,
-                    end = ManisDimens.spaceLg,
-                    bottom = ManisDimens.spaceXl,
-                ),
+                .fillMaxWidth()
+                .padding(horizontal = ManisDimens.spaceLg),
             verticalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
         ) {
             Row(
@@ -125,7 +145,7 @@ fun ActivityWorkspace(onMessage: (String) -> Unit) {
                     ManisSearchField(
                         value = query,
                         onValueChange = { query = it },
-                        placeholder = "搜索域名、规则或出口",
+                        placeholder = "搜索域名、规则、分组或出口",
                     )
                 }
                 ManisSectionAction(if (refreshing) "刷新中…" else "刷新") {
@@ -137,9 +157,13 @@ fun ActivityWorkspace(onMessage: (String) -> Unit) {
                             runCatching { ControllerApi.connections() }
                                 .onSuccess {
                                     snapshot = it
+                                    loadError = null
                                     onMessage("已刷新连接")
                                 }
-                                .onFailure { onMessage("读取连接失败") }
+                                .onFailure { error ->
+                                    loadError = error.message ?: "读取连接失败"
+                                    onMessage("读取连接失败")
+                                }
                             refreshing = false
                         }
                     }
@@ -148,19 +172,11 @@ fun ActivityWorkspace(onMessage: (String) -> Unit) {
             // One compact mono line: how many connections, and what they have moved.
             Text(
                 summaryLine(
-                    shown = connections.size,
+                    shown = visibleViews.size,
                     total = allConnections.size,
-                    download = if (query.isBlank()) {
-                        allConnections.sumOf { it.download }
-                    } else {
-                        connections.sumOf { it.download }
-                    },
-                    upload = if (query.isBlank()) {
-                        allConnections.sumOf { it.upload }
-                    } else {
-                        connections.sumOf { it.upload }
-                    },
-                    pending = snapshot == null && RuntimeState.active,
+                    download = visibleViews.sumOf { it.connection.download },
+                    upload = visibleViews.sumOf { it.connection.upload },
+                    pending = snapshot == null && loadError == null && RuntimeState.active,
                     idle = !RuntimeState.active && query.isBlank(),
                 ),
                 style = ManisType.data.copy(fontSize = 11.5.sp),
@@ -168,18 +184,55 @@ fun ActivityWorkspace(onMessage: (String) -> Unit) {
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
+        }
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(
+                start = ManisDimens.spaceLg,
+                end = ManisDimens.spaceLg,
+                top = ManisDimens.spaceSm,
+                bottom = ManisDimens.spaceXl,
+            ),
+            verticalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
+        ) {
             if (!RuntimeState.active) {
-                ManisCard {
-                    Text("暂无活动连接", style = ManisType.label, color = colors.textPrimary)
-                    ManisMeta("连接 VPN 后，这里会显示每条连接的域名、规则与流量。")
+                item(key = "inactive") {
+                    ManisCard {
+                        Text("暂无活动连接", style = ManisType.label, color = colors.textPrimary)
+                        ManisMeta("连接 VPN 后，这里会显示每条连接的域名、规则与流量。")
+                    }
                 }
-            } else if (connections.isEmpty()) {
-                ManisCard {
-                    ManisMeta("还没有连接；有流量经过内核时会出现在这里。")
+            } else if (loadError != null && allConnections.isEmpty()) {
+                item(key = "load-error") {
+                    ManisCard {
+                        Text("读取连接失败", style = ManisType.label, color = colors.statusError)
+                        ManisMeta(loadError.orEmpty())
+                    }
+                }
+            } else if (allConnections.isEmpty()) {
+                item(key = "empty") {
+                    ManisCard {
+                        ManisMeta("还没有连接；有流量经过内核时会出现在这里。")
+                    }
+                }
+            } else if (visibleViews.isEmpty()) {
+                item(key = "no-match") {
+                    ManisCard {
+                        Text("没有匹配的连接", style = ManisType.label, color = colors.textPrimary)
+                        ManisMeta("试试搜索目标域名、IP、规则名称、规则组或出口节点。")
+                    }
                 }
             } else {
-                for (connection in connections.take(100)) {
-                    ConnectionCard(connection, onClick = { draft = ruleDraft(connection) })
+                itemsIndexed(
+                    items = visibleViews.take(200),
+                    key = { index, view ->
+                        view.connection.id.ifBlank { "conn-$index" }
+                    },
+                ) { _, view ->
+                    ConnectionCard(
+                        view = view,
+                        onClick = { draft = ruleDraft(view.connection, policies) },
+                    )
                 }
             }
         }
@@ -187,38 +240,187 @@ fun ActivityWorkspace(onMessage: (String) -> Unit) {
 }
 
 /**
- * The rule a tap on a connection would create, mirroring the desktop: a domain suffix for a
- * hostname and a single-address CIDR for an IP-only connection.
+ * Strips internal runtime selectors (`__MANIS_GLOBAL__`, `__MANIS_EXIT_IP_PROBE__`, `GLOBAL`)
+ * from Mihomo's `chains`, matching desktop `user_route_stages`.
  */
-private fun ruleDraft(connection: ConnectionInfo): RuleEditor? {
-    val host = connection.host.trim()
+internal fun userRouteStages(chains: List<String>): List<String> =
+    chains
+        .map(String::trim)
+        .filter { it.isNotEmpty() && !isInternalProxyGroup(it) }
+
+/**
+ * Recovers the rule group that matched this connection in the exact compilation order used by
+ * `crates/manis-android/src/model.rs`: enabled rule groups first, then manual rules, then default
+ * fallback for `Match`.
+ */
+internal fun matchingRuleGroup(connection: ConnectionInfo, config: MobileConfig): String? {
+    val kind = connection.rule.trim()
+    if (kind.isEmpty()) return null
+    val normalizedKind = normalizeRuleKind(kind)
+    val payload = connection.rulePayload.trim()
+
+    val enabledGroups = config.ruleGroups.filter { it.enabled && it.name.isNotBlank() && it.id.isNotBlank() }
+    val disabledGroupIds = config.ruleGroups.filterNot { it.enabled }.map { it.id.trim() }.toSet()
+    val enabledGroupIds = enabledGroups.map { it.id.trim() }.toSet()
+
+    for (group in enabledGroups) {
+        val matched = config.ruleEntries.any { entry ->
+            entry.enabled &&
+                entry.groupId?.trim() == group.id.trim() &&
+                !isFinalRuleKind(entry.kind) &&
+                ruleEntryMatchesConnection(entry, normalizedKind, payload)
+        }
+        if (matched) return group.name.trim()
+    }
+
+    val matchedManual = config.ruleEntries.any { entry ->
+        if (!entry.enabled || isFinalRuleKind(entry.kind)) return@any false
+        val ownerId = entry.groupId?.trim().orEmpty()
+        val isManual = ownerId.isEmpty() || (ownerId !in enabledGroupIds && ownerId !in disabledGroupIds)
+        isManual && ruleEntryMatchesConnection(entry, normalizedKind, payload)
+    }
+    if (matchedManual) return "手动规则"
+
+    if (kind.equals("Match", ignoreCase = true)) return "默认兜底"
+    return null
+}
+
+private fun normalizeRuleKind(value: String): String =
+    value.filter(Char::isLetterOrDigit).lowercase()
+
+private fun isFinalRuleKind(kind: String): Boolean {
+    val trimmed = kind.trim()
+    return trimmed.equals("FINAL", ignoreCase = true) || trimmed.equals("MATCH", ignoreCase = true)
+}
+
+private fun ruleEntryMatchesConnection(
+    entry: RuleEntry,
+    normalizedConnectionKind: String,
+    connectionPayload: String,
+): Boolean {
+    if (normalizeRuleKind(entry.kind) != normalizedConnectionKind) return false
+    val expected = entry.value.trim()
+    if (expected.isEmpty() || connectionPayload.isEmpty()) return false
+    return expected.equals(connectionPayload, ignoreCase = true)
+}
+
+/**
+ * Formats the displayed target (`host:port`, `[ipv6]:port`, or fallback), mirroring desktop
+ * `connection_target`.
+ */
+internal fun connectionTarget(connection: ConnectionInfo): String {
+    val host = connection.targetHost
+    val port = connection.destinationPort.trim()
+    return when {
+        host.isNotEmpty() && port.isNotEmpty() && host.contains(':') && !host.startsWith('[') ->
+            "[$host]:$port"
+        host.isNotEmpty() && port.isNotEmpty() -> "$host:$port"
+        host.isNotEmpty() -> host
+        port.isNotEmpty() -> "未知目标 · 端口 $port"
+        else -> "未知目标"
+    }
+}
+
+/** Extracts the process badge label if Mihomo reported a process name or path. */
+internal fun connectionProcess(connection: ConnectionInfo): String? {
+    val process = connection.process.trim()
+    if (process.isNotEmpty()) return process
+    val path = connection.processPath.trim()
+    if (path.isNotEmpty()) return path.substringAfterLast('/').ifEmpty { path }
+    return null
+}
+
+/**
+ * Searches user-visible connection fields, rule payload, matched group, and user route stages,
+ * never matching internal runtime group names like `__MANIS_GLOBAL__`.
+ */
+internal fun matchesActivityQuery(
+    connection: ConnectionInfo,
+    route: ObservedRoute,
+    query: String,
+): Boolean {
+    val needle = query.trim()
+    if (needle.isEmpty()) return true
+    val fields = buildList {
+        add(connection.sniffHost)
+        add(connection.host)
+        add(connection.destinationIp)
+        add(connection.remoteDestination)
+        add(connection.destinationPort)
+        add(connection.process)
+        add(connection.processPath)
+        add(connection.network)
+        add(connection.rule)
+        add(connection.rulePayload)
+        add(route.rule)
+        if (!route.group.isNullOrBlank()) add(route.group)
+        addAll(userRouteStages(connection.chains))
+        if (route.direct) add("直连")
+    }
+    return fields.any { it.contains(needle, ignoreCase = true) }
+}
+
+/**
+ * The rule a tap on a connection creates, mirroring desktop `rule_draft_from_connection`:
+ * prefer sniffed host, then host, then destination IP; use `DOMAIN-SUFFIX` for hostnames and
+ * single-address CIDR for IPs, and prefill the observed policy when selectable.
+ */
+internal fun ruleDraft(connection: ConnectionInfo, policies: List<String>): RuleEditor? {
+    val preferredHost = listOf(connection.sniffHost, connection.host)
+        .map(String::trim)
+        .firstOrNull { it.isNotEmpty() }
     val address = connection.destinationIp.trim()
-    val ipv6 = address.count { it == ':' } >= 2
-    val ipv4 = Regex("^\\d{1,3}(\\.\\d{1,3}){3}$").matches(address)
+    val policy = preferredPolicyForConnection(connection, policies)
+
     val entry = when {
-        host.isNotEmpty() && host != address -> RuleEntry(kind = "DOMAIN-SUFFIX", value = host)
-        ipv6 -> RuleEntry(kind = "IP6-CIDR", value = "$address/128")
-        ipv4 -> RuleEntry(kind = "IP-CIDR", value = "$address/32")
+        preferredHost != null -> ipOrSuffixEntry(preferredHost, policy)
+        address.isNotEmpty() && (isIpv4(address) || isIpv6(address)) -> ipOrSuffixEntry(address, policy)
         else -> null
     }
     return entry?.let { RuleEditor(null, it) }
 }
 
-/** Rule, group, exit and the tone of the exit, read from what the core reported for this link. */
-private fun observedRoute(connection: ConnectionInfo): ObservedRoute {
-    // The core lists the chain innermost first: the proxy that carried the traffic, then the
-    // policy groups above it, ending at the built-in GLOBAL group.
-    val chains = connection.chains.filter { it.isNotBlank() }
-    val exit = chains.firstOrNull() ?: connection.destinationIp.ifBlank { "未知" }
-    val group = chains.drop(1).firstOrNull { it != "GLOBAL" }
-        ?: chains.drop(1).firstOrNull()
-        ?: "全局"
+private fun preferredPolicyForConnection(connection: ConnectionInfo, policies: List<String>): String {
+    for (stage in connection.chains) {
+        val trimmed = stage.trim()
+        if (trimmed in policies) return trimmed
+    }
+    return if ("DIRECT" in policies) "DIRECT" else policies.firstOrNull() ?: "DIRECT"
+}
+
+private fun ipOrSuffixEntry(value: String, policy: String): RuleEntry = when {
+    isIpv6(value) -> RuleEntry(kind = "IP6-CIDR", value = "$value/128", policy = policy)
+    isIpv4(value) -> RuleEntry(kind = "IP-CIDR", value = "$value/32", policy = policy)
+    else -> RuleEntry(kind = "DOMAIN-SUFFIX", value = value, policy = policy)
+}
+
+private val IPV4_PATTERN = Regex("^\\d{1,3}(\\.\\d{1,3}){3}$")
+
+private fun isIpv4(value: String): Boolean = IPV4_PATTERN.matches(value)
+
+private fun isIpv6(value: String): Boolean = value.count { it == ':' } >= 2
+
+/** Rule, optional group, exit, and tone read from what the core reported for this connection. */
+internal fun observedRoute(
+    connection: ConnectionInfo,
+    ruleGroup: String?,
+    nodeDelay: (String) -> Int?,
+): ObservedRoute {
+    val ruleKind = connection.rule.trim()
+    val rulePayload = connection.rulePayload.trim()
+    val rule = when {
+        ruleKind.isNotEmpty() && rulePayload.isNotEmpty() -> "$ruleKind $rulePayload"
+        ruleKind.isNotEmpty() -> ruleKind
+        else -> "未匹配规则"
+    }
+    val stages = userRouteStages(connection.chains)
+    val exit = stages.firstOrNull()
+    val group = ruleGroup?.trim()?.takeIf { it.isNotEmpty() } ?: stages.getOrNull(1)
     val direct = exit == "DIRECT"
     val rejected = exit == "REJECT"
-    // The exit's last measured delay is the only latency the core reports per node.
-    val latency = if (direct || rejected) null else RuntimeState.snapshot?.nodes?.get(exit)?.delay
+    val latency = if (exit == null || direct || rejected) null else nodeDelay(exit)
     return ObservedRoute(
-        rule = connection.rule.ifBlank { "未命中规则" },
+        rule = rule,
         group = group,
         exit = exit,
         latency = latency,
@@ -229,15 +431,17 @@ private fun observedRoute(connection: ConnectionInfo): ObservedRoute {
 
 /** One live connection: what asked, where it went, and the chain that proves it. */
 @Composable
-private fun ConnectionCard(connection: ConnectionInfo, onClick: () -> Unit) {
+private fun ConnectionCard(view: ActivityConnectionView, onClick: () -> Unit) {
     val colors = LocalManisColors.current
-    val route = observedRoute(connection)
+    val connection = view.connection
+    val route = view.route
+    val process = connectionProcess(connection)
     Surface(
         onClick = onClick,
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(ManisDimens.radiusCard),
         color = colors.surfaceElevated,
-        border = androidx.compose.foundation.BorderStroke(1.dp, colors.outlineSubtle),
+        border = BorderStroke(1.dp, colors.outlineSubtle),
     ) {
         Column(
             Modifier
@@ -251,13 +455,16 @@ private fun ConnectionCard(connection: ConnectionInfo, onClick: () -> Unit) {
                 horizontalArrangement = Arrangement.spacedBy(ManisDimens.spaceSm),
             ) {
                 Text(
-                    connection.host.ifBlank { "未命名连接" },
+                    connectionTarget(connection),
                     modifier = Modifier.weight(1f),
                     style = ManisType.data,
                     color = colors.textPrimary,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
+                if (process != null) {
+                    ManisPill(process, ManisTone.Neutral)
+                }
                 ManisPill(connection.network.ifBlank { "tcp" }.uppercase(), ManisTone.Neutral)
                 Text(
                     "↓ ${formatBytes(connection.download)} · ↑ ${formatBytes(connection.upload)}",
